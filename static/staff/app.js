@@ -287,47 +287,67 @@ async function loadMenus() {
       </td>
     </tr>`).join("") || `<tr><td colspan="7" style="color:var(--text-muted);">メニューがまだありません</td></tr>`;
 }
+function showMenuMsg(text, isError) {
+  const errBox = document.getElementById("menu-error");
+  errBox.textContent = text;
+  errBox.style.background = isError ? "" : "#e7f6e7";
+  errBox.style.borderColor = isError ? "" : "var(--good)";
+  errBox.style.color = isError ? "" : "#0a6b0a";
+  errBox.classList.add("show");
+}
 async function saveMenu(id) {
   const errBox = document.getElementById("menu-error");
   errBox.classList.remove("show");
-  const name = document.getElementById(`m-name-${id}`).value.trim();
-  const meta = document.getElementById(`m-meta-${id}`).value.trim();
-  const price = parseInt(document.getElementById(`m-price-${id}`).value, 10);
-  const durationMin = parseInt(document.getElementById(`m-duration-${id}`).value, 10);
-  const priceIsFrom = document.getElementById(`m-from-${id}`).checked;
-  const studentDiscount = parseInt(document.getElementById(`m-discount-${id}`).value, 10) || 0;
-  if (!name || !(price >= 0) || !(durationMin > 0)) {
-    errBox.textContent = "メニュー名・価格・所要時間を正しく入力してください。";
-    errBox.classList.add("show");
-    return;
-  }
   try {
+    const nameEl = document.getElementById(`m-name-${id}`);
+    const metaEl = document.getElementById(`m-meta-${id}`);
+    const priceEl = document.getElementById(`m-price-${id}`);
+    const durationEl = document.getElementById(`m-duration-${id}`);
+    const fromEl = document.getElementById(`m-from-${id}`);
+    const discountEl = document.getElementById(`m-discount-${id}`);
+    if (!nameEl || !metaEl || !priceEl || !durationEl || !fromEl || !discountEl) {
+      showMenuMsg("画面の項目が正しく読み込めていません。ページを再読み込みしてもう一度お試しください。", true);
+      return;
+    }
+    const name = nameEl.value.trim();
+    const meta = metaEl.value.trim();
+    const price = parseInt(priceEl.value, 10);
+    const durationMin = parseInt(durationEl.value, 10);
+    const priceIsFrom = fromEl.checked;
+    const studentDiscount = parseInt(discountEl.value, 10) || 0;
+    if (!name || !(price >= 0) || !(durationMin > 0)) {
+      showMenuMsg("メニュー名・価格・所要時間を正しく入力してください。", true);
+      return;
+    }
     await api(`/api/staff/menus/${id}`, { method: "PATCH", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount }) });
-    loadMenus();
+    await loadMenus();
+    showMenuMsg("保存しました。", false);
   } catch (e) {
-    errBox.textContent = "保存に失敗しました：" + e.message;
-    errBox.classList.add("show");
+    showMenuMsg("保存に失敗しました：" + e.message, true);
   }
 }
 async function deleteMenu(id) {
-  await api(`/api/staff/menus/${id}`, { method: "DELETE" });
-  loadMenus();
+  try {
+    await api(`/api/staff/menus/${id}`, { method: "DELETE" });
+    loadMenus();
+  } catch (e) {
+    showMenuMsg("削除に失敗しました：" + e.message, true);
+  }
 }
 async function addMenu() {
   const errBox = document.getElementById("menu-error");
   errBox.classList.remove("show");
-  const name = document.getElementById("menu-new-name").value.trim();
-  const meta = document.getElementById("menu-new-meta").value.trim();
-  const price = parseInt(document.getElementById("menu-new-price").value, 10);
-  const durationMin = parseInt(document.getElementById("menu-new-duration").value, 10);
-  const priceIsFrom = document.getElementById("menu-new-from").checked;
-  const studentDiscount = parseInt(document.getElementById("menu-new-discount").value, 10) || 0;
-  if (!name || !(price >= 0) || !(durationMin > 0)) {
-    errBox.textContent = "メニュー名・価格・所要時間を正しく入力してください。";
-    errBox.classList.add("show");
-    return;
-  }
   try {
+    const name = document.getElementById("menu-new-name").value.trim();
+    const meta = document.getElementById("menu-new-meta").value.trim();
+    const price = parseInt(document.getElementById("menu-new-price").value, 10);
+    const durationMin = parseInt(document.getElementById("menu-new-duration").value, 10);
+    const priceIsFrom = document.getElementById("menu-new-from").checked;
+    const studentDiscount = parseInt(document.getElementById("menu-new-discount").value, 10) || 0;
+    if (!name || !(price >= 0) || !(durationMin > 0)) {
+      showMenuMsg("メニュー名・価格・所要時間を正しく入力してください。", true);
+      return;
+    }
     await api("/api/staff/menus", { method: "POST", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount }) });
     document.getElementById("menu-new-name").value = "";
     document.getElementById("menu-new-meta").value = "";
@@ -335,10 +355,10 @@ async function addMenu() {
     document.getElementById("menu-new-duration").value = "";
     document.getElementById("menu-new-discount").value = "";
     document.getElementById("menu-new-from").checked = false;
-    loadMenus();
+    await loadMenus();
+    showMenuMsg("追加しました。", false);
   } catch (e) {
-    errBox.textContent = "追加に失敗しました：" + e.message;
-    errBox.classList.add("show");
+    showMenuMsg("追加に失敗しました：" + e.message, true);
   }
 }
 
@@ -353,6 +373,49 @@ async function loadSettings() {
       <input type="checkbox" value="${i}" ${s.closedWeekdays.includes(i) ? "checked" : ""} style="accent-color:var(--brand);">${name}曜日
     </label>`).join("");
   renderClosedDates(s.closedDates || []);
+  document.getElementById("combo-last-order").value = s.comboPermColorLastOrder || "";
+  const menus = await api("/api/menus");
+  document.getElementById("last-order-list").innerHTML = menus.map(m => `
+    <div style="display:flex;align-items:center;gap:12px;">
+      <span style="min-width:110px;font-size:13px;font-weight:600;">${m.name}</span>
+      <input type="time" id="lo-${m.id}" value="${m.last_order_time || ""}" style="max-width:150px;border-radius:10px;border:1px solid var(--border);padding:8px 10px;font-size:13px;">
+    </div>`).join("") || `<div style="font-size:12px;color:var(--text-muted);">メニューがまだありません</div>`;
+}
+
+async function saveLastOrderSettings() {
+  const msg = document.getElementById("last-order-msg");
+  msg.classList.remove("show");
+  try {
+    const menus = await api("/api/menus");
+    for (const m of menus) {
+      const input = document.getElementById(`lo-${m.id}`);
+      if (!input) continue;
+      const lastOrderTime = input.value || "";
+      if (lastOrderTime === (m.last_order_time || "")) continue;
+      await api(`/api/staff/menus/${m.id}`, { method: "PATCH", body: JSON.stringify({ lastOrderTime }) });
+    }
+    await api("/api/staff/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        openTime: document.getElementById("set-open").value,
+        closeTime: document.getElementById("set-close").value,
+        closedWeekdays: [...document.querySelectorAll("#set-closed-weekdays input:checked")].map(el => parseInt(el.value, 10)),
+        comboPermColorLastOrder: document.getElementById("combo-last-order").value || "",
+      }),
+    });
+    msg.textContent = "最終受付時間を保存しました。";
+    msg.style.background = "#e7f6e7";
+    msg.style.borderColor = "var(--good)";
+    msg.style.color = "#0a6b0a";
+    msg.classList.add("show");
+    loadSettings();
+  } catch (e) {
+    msg.textContent = "保存に失敗しました：" + e.message;
+    msg.style.background = "";
+    msg.style.borderColor = "";
+    msg.style.color = "";
+    msg.classList.add("show");
+  }
 }
 
 function renderClosedDates(dates) {
