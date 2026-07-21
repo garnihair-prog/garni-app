@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS menu_items (
     price INTEGER NOT NULL,
     price_is_from INTEGER NOT NULL DEFAULT 0,  -- 1の場合、お客様向け表示は「¥○○〜」（目安価格）になる
     student_discount INTEGER NOT NULL DEFAULT 0,  -- 学割の割引額（円）。0の場合は学割なし
+    last_order_time TEXT,       -- このメニューの最終受付時間（HH:MM）。NULLなら営業時間内はいつでも受付
     duration_min INTEGER NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0
 );
@@ -82,6 +83,7 @@ CREATE TABLE IF NOT EXISTS salon_settings (
     open_time TEXT NOT NULL DEFAULT '10:00',
     close_time TEXT NOT NULL DEFAULT '19:00',
     closed_weekdays TEXT NOT NULL DEFAULT '1',   -- comma区切り。0=日,1=月,...,6=土
+    combo_perm_color_last_order TEXT,            -- パーマ＋カラーを同時予約する場合の最終受付時間（HH:MM）
     updated_at TEXT
 );
 
@@ -118,7 +120,7 @@ def init_db():
     has_settings = conn.execute("SELECT COUNT(*) c FROM salon_settings WHERE id=1").fetchone()["c"] > 0
     if not has_settings:
         conn.execute(
-            "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, updated_at) VALUES (1, '10:00', '19:00', '1', ?)",
+            "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, combo_perm_color_last_order, updated_at) VALUES (1, '10:00', '19:00', '1', '15:00', ?)",
             (now_iso(),),
         )
         conn.commit()
@@ -143,6 +145,16 @@ def init_db():
         conn.execute("ALTER TABLE menu_items ADD COLUMN student_discount INTEGER NOT NULL DEFAULT 0")
         # 移行時、既存メニューの「カラー」「パーマ」には自動で学割500円引きを設定する
         conn.execute("UPDATE menu_items SET student_discount=500 WHERE name IN ('カラー', 'パーマ')")
+    if "last_order_time" not in menu_cols:
+        conn.execute("ALTER TABLE menu_items ADD COLUMN last_order_time TEXT")
+        # 移行時、既存メニューには指定された最終受付時間を自動で設定する
+        conn.execute("UPDATE menu_items SET last_order_time='17:00' WHERE name='カット'")
+        conn.execute("UPDATE menu_items SET last_order_time='16:00' WHERE name IN ('パーマ', 'カラー')")
+        conn.execute("UPDATE menu_items SET last_order_time='15:00' WHERE name='縮毛矯正'")
+    settings_cols = {row["name"] for row in conn.execute("PRAGMA table_info(salon_settings)").fetchall()}
+    if "combo_perm_color_last_order" not in settings_cols:
+        conn.execute("ALTER TABLE salon_settings ADD COLUMN combo_perm_color_last_order TEXT")
+        conn.execute("UPDATE salon_settings SET combo_perm_color_last_order='15:00' WHERE id=1")
     # 個人店化に伴い、旧サンプルのスタイリストA/B（従業員なし）を削除する（旧バージョンからの移行）。
     # 該当スタイリストの予約は店長（s-m）に付け替え、シフトは削除する。
     old_ids = [row["id"] for row in conn.execute(
@@ -168,16 +180,16 @@ def seed(conn):
         "INSERT INTO stylists (id, name, role, sort_order) VALUES (?,?,?,?)", stylists
     )
 
-    # (id, name, meta, price, student_discount, duration_min, sort_order)
+    # (id, name, meta, price, student_discount, last_order_time, duration_min, sort_order)
     menus = [
-        ("m-cut", "カット", "シャンプー・ブロー込み", 4400, 0, 60, 0),
-        ("m-color", "カラー", "一剤〜二剤", 6600, 500, 120, 1),
-        ("m-perm", "パーマ", "コールド・デジタル選択可", 8800, 500, 120, 2),
-        ("m-treat", "トリートメント", "集中補修", 3300, 0, 30, 3),
-        ("m-straight", "縮毛矯正", "くせ毛矯正", 11000, 0, 180, 4),
+        ("m-cut", "カット", "シャンプー・ブロー込み", 4400, 0, "17:00", 60, 0),
+        ("m-color", "カラー", "一剤〜二剤", 6600, 500, "16:00", 120, 1),
+        ("m-perm", "パーマ", "コールド・デジタル選択可", 8800, 500, "16:00", 120, 2),
+        ("m-treat", "トリートメント", "集中補修", 3300, 0, None, 30, 3),
+        ("m-straight", "縮毛矯正", "くせ毛矯正", 11000, 0, "15:00", 180, 4),
     ]
     cur.executemany(
-        "INSERT INTO menu_items (id, name, meta, price, student_discount, duration_min, sort_order) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO menu_items (id, name, meta, price, student_discount, last_order_time, duration_min, sort_order) VALUES (?,?,?,?,?,?,?,?)",
         menus,
     )
 
@@ -207,7 +219,7 @@ def seed(conn):
     )
 
     # メニュー名 -> 所要時間(分) のマップ（座席重複チェック用）
-    duration_by_menu = {m[1]: m[5] for m in menus}
+    duration_by_menu = {m[1]: m[6] for m in menus}
 
     # 1人で対応するため、同じ日でも予約時間が重ならないように順番に並べる
     # （カラー10:00-12:00 → カット12:00-13:00 → パーマ13:00-15:00 → 縮毛矯正15:00-18:00）
@@ -241,8 +253,9 @@ def seed(conn):
     )
 
     # 営業時間・定休日の初期設定（月曜定休、10:00〜19:00）。スタッフ設定画面から変更可能。
+    # パーマ＋カラーを同時予約する場合の最終受付は15:00。
     cur.execute(
-        "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, updated_at) VALUES (1, '10:00', '19:00', '1', ?)",
+        "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, combo_perm_color_last_order, updated_at) VALUES (1, '10:00', '19:00', '1', '15:00', ?)",
         (ts,),
     )
 
