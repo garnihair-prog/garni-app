@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>GARNI スタッフ管理画面</title>
+<link rel="stylesheet" href="/static/shared/styles.css">
+<link rel="manifest" href="/static/staff-manifest.json">
+<meta name="theme-color" content="#a9765c">
+<link rel="icon" href="/static/favicon.ico">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icons/icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="GARNIスタッフ">
+</head>
+<body>
+<div class="app-shell">
+  <header class="top">
+    <div class="brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="name">GARNI スタッフ管理画面</div>
+        <div class="sub">サロン運営</div>
+      </div>
+    </div>
+    <a class="switch-link" href="/">お客様アプリはこちら</a>
+  </header>
+
+  <div id="login-view" class="login-wrap">
+    <h2>スタッフログイン</h2>
+    <p>共有パスワードを入力してください</p>
+    <div class="field"><input type="password" id="login-password" placeholder="パスワード"></div>
+    <div class="error-banner" id="login-error"></div>
+    <button class="btn-primary" onclick="doLogin()">ログイン</button>
+  </div>
+
+  <div id="staff-view" class="staff-layout" style="display:none;">
+    <div class="side-nav">
+      <button class="active" data-panel="s-dashboard" onclick="showSPanel('s-dashboard')">ダッシュボード</button>
+      <button data-panel="s-reserve" onclick="showSPanel('s-reserve')">予約管理</button>
+      <button data-panel="s-karte" onclick="showSPanel('s-karte')">顧客カルテ</button>
+      <button data-panel="s-shift" onclick="showSPanel('s-shift')">シフト管理</button>
+      <button data-panel="s-menu" onclick="showSPanel('s-menu')">メニュー・価格</button>
+      <button data-panel="s-settings" onclick="showSPanel('s-settings')">設定</button>
+      <button class="logout-btn" onclick="doLogout()">ログアウト</button>
+    </div>
+
+    <div>
+      <div class="staff-panel active" id="s-dashboard">
+        <div class="stat-row" id="dash-stats"></div>
+        <div class="panel-card">
+          <h3>週間売上（実績・実データ集計）</h3>
+          <div class="chart-wrap">
+            <svg class="bars-svg" id="sales-chart"></svg>
+            <div class="bar-tip" id="bar-tip"></div>
+          </div>
+        </div>
+        <div class="panel-card">
+          <h3>本日の予約</h3>
+          <table class="data">
+            <thead><tr><th>時間</th><th>お客様</th><th>メニュー</th><th>担当</th><th>状況</th></tr></thead>
+            <tbody id="dash-reserve-body"></tbody>
+          </table>
+        </div>
+        <div class="panel-card">
+          <h3>メニューカテゴリー別 お客様数・割合</h3>
+          <p style="font-size:11.5px;color:var(--text-muted);margin-top:0;">それぞれのメニューを一度でも予約したことがあるお客様の人数・全体に対する割合（キャンセルを除く全期間）</p>
+          <div class="bar-list" id="stat-categories"></div>
+        </div>
+        <div class="stat-grid-2">
+          <div class="panel-card">
+            <h3>男女別</h3>
+            <div class="bar-list" id="stat-gender"></div>
+          </div>
+          <div class="panel-card">
+            <h3>年齢別</h3>
+            <div class="bar-list" id="stat-age"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="staff-panel" id="s-reserve">
+        <div class="panel-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <h3 style="margin:0;">予約一覧</h3>
+            <input type="date" id="reserve-date" onchange="loadReserveDate()">
+          </div>
+          <table class="data">
+            <thead><tr><th>時間</th><th>お客様</th><th>電話番号</th><th>メニュー</th><th>担当</th><th>金額</th><th>希望写真</th><th>状況</th></tr></thead>
+            <tbody id="reserve-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="staff-panel" id="s-karte">
+        <div class="panel-card">
+          <h3>顧客カルテ</h3>
+          <div class="cust-grid">
+            <div class="cust-list" id="cust-list"></div>
+            <div id="karte-detail"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="staff-panel" id="s-shift">
+        <div class="panel-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <h3 style="margin:0;">週間シフト</h3>
+            <div>
+              <button class="btn-ghost" style="width:auto;display:inline;" onclick="shiftWeek(-7)">← 前週</button>
+              <button class="btn-ghost" style="width:auto;display:inline;" onclick="shiftWeek(7)">次週 →</button>
+            </div>
+          </div>
+          <p style="font-size:11.5px;color:var(--text-muted);margin-top:0;">セルをクリックすると 休み → 9-18 → 10-19 の順で切り替わります（実際にサーバーへ保存されます）</p>
+          <div class="shift-grid" id="shift-grid"></div>
+        </div>
+      </div>
+
+      <div class="staff-panel" id="s-menu">
+        <div class="panel-card">
+          <h3>メニューを追加</h3>
+          <div class="inline-form">
+            <input type="text" id="menu-new-name" placeholder="メニュー名（例：カット）">
+            <input type="text" id="menu-new-meta" placeholder="説明（任意・例：シャンプー込み）">
+            <input type="number" id="menu-new-price" placeholder="価格（円）">
+            <input type="number" id="menu-new-duration" placeholder="所要時間（分）">
+            <button onclick="addMenu()">追加する</button>
+          </div>
+          <div class="error-banner" id="menu-error"></div>
+        </div>
+        <div class="panel-card">
+          <h3>メニュー一覧</h3>
+          <table class="data">
+            <thead><tr><th>メニュー名</th><th>説明</th><th>価格</th><th>所要時間</th><th></th></tr></thead>
+            <tbody id="menu-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="staff-panel" id="s-settings">
+        <div class="panel-card">
+          <h3>営業時間・定休日</h3>
+          <div class="field" style="max-width:200px;display:inline-block;margin-right:16px;">
+            <label>開店時刻</label><input type="time" id="set-open">
+          </div>
+          <div class="field" style="max-width:200px;display:inline-block;">
+            <label>閉店時刻</label><input type="time" id="set-close">
+          </div>
+          <div class="field">
+            <label>定休日（複数選択可）</label>
+            <div id="set-closed-weekdays" style="display:flex;gap:14px;flex-wrap:wrap;"></div>
+          </div>
+        </div>
+
+        <button class="btn-primary" style="max-width:240px;" onclick="saveSettings()">設定を保存</button>
+        <div class="error-banner" id="settings-msg" style="margin-top:12px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="note">GARNI アプリ スタッフ管理画面 &middot; データは実際にサーバーへ保存されます</footer>
+</div>
+
+<script src="/static/shared/photo.js"></script>
+<script src="/static/staff/app.js"></script>
+</body>
+</html>
