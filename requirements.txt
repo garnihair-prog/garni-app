@@ -1,0 +1,1 @@
+# GARNI app has no external dependencies
