@@ -32,9 +32,12 @@ function menuCardHtml(m, withCheckbox) {
     <div class="menu-card">
       <div class="menu-row">
         ${withCheckbox ? `<input type="checkbox" ${checked} onchange="toggleMenu('${m.id}')">` : ""}
-        <div><div class="mname">${m.name}</div><div class="mmeta">${m.meta || ""} / ${m.duration_min}分</div></div>
+        <div><div class="mname">${m.name}</div>${m.meta ? `<div class="mmeta">${m.meta}</div>` : ""}</div>
       </div>
-      <div class="mprice">¥${m.price.toLocaleString()}</div>
+      <div class="price-col">
+        <div class="mprice">¥${m.price.toLocaleString()}${m.price_is_from ? "〜" : ""}</div>
+        ${m.student_discount > 0 ? `<div class="mdiscount">学割 -¥${m.student_discount.toLocaleString()}</div>` : ""}
+      </div>
     </div>`;
 }
 
@@ -65,10 +68,12 @@ function renderCalendar() {
   for (let day = 1; day <= daysInMonth; day++) {
     const d = new Date(y, m, day);
     const isPast = d < new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const isClosed = (SETTINGS.closedWeekdays || []).includes(d.getDay());
     const iso = d.toISOString().slice(0, 10);
+    const isClosedWeekday = (SETTINGS.closedWeekdays || []).includes(d.getDay());
+    const isClosedDate = (SETTINGS.closedDates || []).includes(iso);
+    const isClosed = isClosedWeekday || isClosedDate;
     const disabled = isPast || isClosed;
-    html += `<button ${disabled ? "disabled" : ""} onclick="selectDate('${iso}', ${day})" id="cal-${day}" title="${isClosed ? "定休日" : ""}">${day}</button>`;
+    html += `<button ${disabled ? "disabled" : ""} onclick="selectDate('${iso}', ${day})" id="cal-${day}" title="${isClosed ? "休業日" : ""}">${day}</button>`;
   }
   document.getElementById("cal-grid").innerHTML = html;
 }
@@ -116,9 +121,9 @@ async function renderSlots() {
   document.getElementById("time-duration-hint").textContent = `合計所要時間：約${duration}分`;
   try {
     const data = await api(`/api/availability?date=${booking.date}&stylistId=${booking.stylistId}&durationMin=${duration}`);
-    if (data.reason === "closed_weekday") {
+    if (data.reason === "closed_weekday" || data.reason === "closed_date") {
       grid.innerHTML = "";
-      errBox.textContent = "この日は定休日です。別の日を選んでください。";
+      errBox.textContent = "この日は休業日です。別の日を選んでください。";
       errBox.classList.add("show");
       return;
     }
@@ -167,12 +172,16 @@ function endTimeLabel(startTime, durationMin) {
 function renderConfirm() {
   const names = [...selectedMenus].map(id => MENUS.find(m => m.id === id));
   const total = names.reduce((a, m) => a + m.price, 0);
+  const hasFromPrice = names.some(m => m.price_is_from);
+  const totalStudentDiscount = names.reduce((a, m) => a + (m.student_discount || 0), 0);
   const duration = totalDurationMin();
   document.getElementById("confirm-summary").innerHTML = `
     <div class="row"><span>来店日時</span><span>${booking.dateLabel} ${booking.time}〜${endTimeLabel(booking.time, duration)}</span></div>
     <div class="row"><span>メニュー</span><span>${names.map(m => m.name).join("・")}</span></div>
     <div class="row"><span>担当</span><span>${booking.stylistName}</span></div>
-    <div class="row total"><span>合計</span><span>¥${total.toLocaleString()}</span></div>
+    <div class="row total"><span>合計</span><span>¥${total.toLocaleString()}${hasFromPrice ? "〜" : ""}</span></div>
+    ${hasFromPrice ? `<div class="row"><span></span><span style="font-size:11px;color:var(--text-muted);">※目安料金を含みます。実際の料金は状態により変動します</span></div>` : ""}
+    ${totalStudentDiscount > 0 ? `<div class="row"><span></span><span style="font-size:11px;color:var(--brand-dark);">学生証のご提示で ¥${totalStudentDiscount.toLocaleString()} 引きになります（当日お会計時に適用）</span></div>` : ""}
     ${stylePhotoDataUrl ? `<div class="row"><span>希望スタイル写真</span><span><img src="${stylePhotoDataUrl}" style="width:60px;height:60px;object-fit:cover;border-radius:8px;"></span></div>` : ""}
   `;
 }
