@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS reservations (
     note TEXT,
     status TEXT NOT NULL DEFAULT 'wait',  -- wait / visited / cancel
     style_photo_path TEXT,     -- お客様が予約時にアップロードした「希望スタイル」参考写真
+    cancellation_fee INTEGER,  -- 土日祝キャンセル時に自動計算されるキャンセル料（円）。対象外ならNULLまたは0
     created_at TEXT NOT NULL,
     FOREIGN KEY (customer_id) REFERENCES customers(id),
     FOREIGN KEY (stylist_id) REFERENCES stylists(id)
@@ -84,6 +85,7 @@ CREATE TABLE IF NOT EXISTS salon_settings (
     close_time TEXT NOT NULL DEFAULT '19:00',
     closed_weekdays TEXT NOT NULL DEFAULT '1',   -- comma区切り。0=日,1=月,...,6=土
     combo_perm_color_last_order TEXT,            -- パーマ＋カラーを同時予約する場合の最終受付時間（HH:MM）
+    cancellation_fee_percent INTEGER NOT NULL DEFAULT 50,  -- 土日祝キャンセル時のキャンセル料（予約金額に対する割合%）
     updated_at TEXT
 );
 
@@ -120,7 +122,7 @@ def init_db():
     has_settings = conn.execute("SELECT COUNT(*) c FROM salon_settings WHERE id=1").fetchone()["c"] > 0
     if not has_settings:
         conn.execute(
-            "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, combo_perm_color_last_order, updated_at) VALUES (1, '10:00', '19:00', '1', '15:00', ?)",
+            "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, combo_perm_color_last_order, cancellation_fee_percent, updated_at) VALUES (1, '10:00', '19:00', '1', '15:00', 50, ?)",
             (now_iso(),),
         )
         conn.commit()
@@ -134,6 +136,8 @@ def init_db():
     resv_cols = {row["name"] for row in conn.execute("PRAGMA table_info(reservations)").fetchall()}
     if "style_photo_path" not in resv_cols:
         conn.execute("ALTER TABLE reservations ADD COLUMN style_photo_path TEXT")
+    if "cancellation_fee" not in resv_cols:
+        conn.execute("ALTER TABLE reservations ADD COLUMN cancellation_fee INTEGER")
     karte_cols = {row["name"] for row in conn.execute("PRAGMA table_info(karte_entries)").fetchall()}
     if "photo_path" not in karte_cols:
         conn.execute("ALTER TABLE karte_entries ADD COLUMN photo_path TEXT")
@@ -155,6 +159,8 @@ def init_db():
     if "combo_perm_color_last_order" not in settings_cols:
         conn.execute("ALTER TABLE salon_settings ADD COLUMN combo_perm_color_last_order TEXT")
         conn.execute("UPDATE salon_settings SET combo_perm_color_last_order='15:00' WHERE id=1")
+    if "cancellation_fee_percent" not in settings_cols:
+        conn.execute("ALTER TABLE salon_settings ADD COLUMN cancellation_fee_percent INTEGER NOT NULL DEFAULT 50")
     # 個人店化に伴い、旧サンプルのスタイリストA/B（従業員なし）を削除する（旧バージョンからの移行）。
     # 該当スタイリストの予約は店長（s-m）に付け替え、シフトは削除する。
     old_ids = [row["id"] for row in conn.execute(
@@ -253,9 +259,9 @@ def seed(conn):
     )
 
     # 営業時間・定休日の初期設定（月曜定休、10:00〜19:00）。スタッフ設定画面から変更可能。
-    # パーマ＋カラーを同時予約する場合の最終受付は15:00。
+    # パーマ＋カラーを同時予約する場合の最終受付は15:00。土日祝キャンセル時のキャンセル料は初期値50%。
     cur.execute(
-        "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, combo_perm_color_last_order, updated_at) VALUES (1, '10:00', '19:00', '1', '15:00', ?)",
+        "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, combo_perm_color_last_order, cancellation_fee_percent, updated_at) VALUES (1, '10:00', '19:00', '1', '15:00', 50, ?)",
         (ts,),
     )
 
