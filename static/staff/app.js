@@ -181,13 +181,23 @@ async function loadReserveDate() {
       <td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}</td><td>${r.customer_phone}</td><td>${r.menu_names}</td>
       <td>${r.stylist_name}</td><td class="amt">¥${r.total_price.toLocaleString()}</td>
       <td>${photoThumbHtml(r.style_photo_path, "希望スタイル")}</td>
-      <td>${statusSelectHtml(r)}</td>
+      <td>
+        ${statusSelectHtml(r)}
+        ${r.status === "cancel" && r.cancellation_fee > 0 ? `<div style="font-size:11px;color:var(--critical);font-weight:700;margin-top:4px;">キャンセル料 ¥${r.cancellation_fee.toLocaleString()}</div>` : ""}
+      </td>
     </tr>`).join("") || `<tr><td colspan="8" style="color:var(--text-muted);">この日の予約はありません</td></tr>`;
 }
 async function updateStatus(id, status) {
-  await api(`/api/staff/reservations/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
+  const updated = await api(`/api/staff/reservations/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
   loadReserveDate();
   loadDashboard();
+  const msg = document.getElementById("reserve-msg");
+  if (status === "cancel" && updated.cancellation_fee > 0) {
+    msg.textContent = `土日祝のご予約のキャンセルのため、キャンセル料 ¥${updated.cancellation_fee.toLocaleString()} が発生します。お会計時にご案内ください。`;
+    msg.classList.add("show");
+  } else if (msg) {
+    msg.classList.remove("show");
+  }
 }
 
 /* ---------------- KARTE ---------------- */
@@ -374,6 +384,7 @@ async function loadSettings() {
     </label>`).join("");
   renderClosedDates(s.closedDates || []);
   document.getElementById("combo-last-order").value = s.comboPermColorLastOrder || "";
+  document.getElementById("cancel-fee-percent").value = s.cancellationFeePercent != null ? s.cancellationFeePercent : 50;
   const menus = await api("/api/menus");
   document.getElementById("last-order-list").innerHTML = menus.map(m => `
     <div style="display:flex;align-items:center;gap:12px;">
@@ -404,6 +415,41 @@ async function saveLastOrderSettings() {
       }),
     });
     msg.textContent = "最終受付時間を保存しました。";
+    msg.style.background = "#e7f6e7";
+    msg.style.borderColor = "var(--good)";
+    msg.style.color = "#0a6b0a";
+    msg.classList.add("show");
+    loadSettings();
+  } catch (e) {
+    msg.textContent = "保存に失敗しました：" + e.message;
+    msg.style.background = "";
+    msg.style.borderColor = "";
+    msg.style.color = "";
+    msg.classList.add("show");
+  }
+}
+
+async function saveCancelFeeSettings() {
+  const msg = document.getElementById("cancel-fee-msg");
+  msg.classList.remove("show");
+  const percentEl = document.getElementById("cancel-fee-percent");
+  const percent = parseInt(percentEl.value, 10);
+  if (isNaN(percent) || percent < 0 || percent > 100) {
+    msg.textContent = "0〜100の数値で入力してください。";
+    msg.classList.add("show");
+    return;
+  }
+  try {
+    await api("/api/staff/settings", {
+      method: "POST",
+      body: JSON.stringify({
+        openTime: document.getElementById("set-open").value,
+        closeTime: document.getElementById("set-close").value,
+        closedWeekdays: [...document.querySelectorAll("#set-closed-weekdays input:checked")].map(el => parseInt(el.value, 10)),
+        cancellationFeePercent: percent,
+      }),
+    });
+    msg.textContent = "キャンセルポリシーを保存しました。";
     msg.style.background = "#e7f6e7";
     msg.style.borderColor = "var(--good)";
     msg.style.color = "#0a6b0a";

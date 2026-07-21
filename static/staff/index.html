@@ -87,6 +87,7 @@
             <h3 style="margin:0;">予約一覧</h3>
             <input type="date" id="reserve-date" onchange="loadReserveDate()">
           </div>
+          <div class="error-banner" id="reserve-msg" style="margin-bottom:12px;"></div>
           <table class="data">
             <thead><tr><th>時間</th><th>お客様</th><th>電話番号</th><th>メニュー</th><th>担当</th><th>金額</th><th>希望写真</th><th>状況</th></tr></thead>
             <tbody id="reserve-body"></tbody>
@@ -173,6 +174,29 @@
           </div>
           <div class="error-banner" id="closed-date-msg" style="margin-top:10px;"></div>
           <div id="closed-date-list" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
+
+        <div class="panel-card" style="margin-top:18px;">
+          <h3>キャンセルポリシー</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">予約日が土曜・日曜・祝日にあたる予約がキャンセルされた場合、自動でキャンセル料を計算します（会計時にご案内ください。金額のみの記録で、自動請求は行いません）。</p>
+          <div class="field" style="max-width:220px;">
+            <label>キャンセル料（予約金額に対する割合・%）</label>
+            <input type="number" id="cancel-fee-percent" min="0" max="100">
+          </div>
+          <button class="btn-primary" style="max-width:200px;margin-top:4px;" onclick="saveCancelFeeSettings()">キャンセルポリシーを保存</button>
+          <div class="error-banner" id="cancel-fee-msg" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="panel-card" style="margin-top:18px;">
+          <h3>メニューごとの最終受付時間</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">閉店時刻より早く受付を締め切りたいメニューがあれば、ここで設定してください（空欄なら営業時間いっぱいまで受付可）。</p>
+          <div id="last-order-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;"></div>
+          <div class="field" style="max-width:300px;">
+            <label>パーマ＋カラーを同時に予約する場合の最終受付</label>
+            <input type="time" id="combo-last-order">
+          </div>
+          <button class="btn-primary" style="max-width:240px;margin-top:12px;" onclick="saveLastOrderSettings()">最終受付時間を保存</button>
+          <div class="error-banner" id="last-order-msg" style="margin-top:12px;"></div>
         </div>
       </div>
     </div>
