@@ -3,9 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>GARNI アプリ</title>
+<title>GARNI スタッフ管理画面</title>
 <link rel="stylesheet" href="/static/shared/styles.css">
-<link rel="manifest" href="/static/manifest.json">
+<link rel="manifest" href="/static/staff-manifest.json">
 <meta name="theme-color" content="#a9765c">
 <link rel="icon" href="/static/favicon.ico">
 <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
@@ -13,7 +13,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="GARNI">
+<meta name="apple-mobile-web-app-title" content="GARNIスタッフ">
 </head>
 <body>
 <div class="app-shell">
@@ -21,138 +21,167 @@
     <div class="brand">
       <div class="mark">G</div>
       <div>
-        <div class="name">GARNI アプリ</div>
-        <div class="sub">お客様向け</div>
+        <div class="name">GARNI スタッフ管理画面</div>
+        <div class="sub">サロン運営</div>
       </div>
     </div>
-    <a class="switch-link" href="/staff">スタッフの方はこちら</a>
+    <a class="switch-link" href="/">お客様アプリはこちら</a>
   </header>
 
-  <div class="phone-wrap">
-    <div class="phone">
-      <div class="phone-notch"></div>
-      <div class="phone-screen">
+  <div id="login-view" class="login-wrap">
+    <h2>スタッフログイン</h2>
+    <p>共有パスワードを入力してください</p>
+    <div class="field"><input type="password" id="login-password" placeholder="パスワード"></div>
+    <div class="error-banner" id="login-error"></div>
+    <button class="btn-primary" onclick="doLogin()">ログイン</button>
+  </div>
 
-        <div class="cscreen active" id="c-home">
-          <div class="hero">
-            <div>
-              <div class="h1">GARNI 熊本店</div>
-              <div class="h2">ご来店いつもありがとうございます</div>
-            </div>
-          </div>
-          <div class="quick-actions">
-            <button onclick="startBooking()">予約する</button>
-            <button class="secondary" onclick="showCScreen('c-menu')">メニューを見る</button>
-          </div>
-          <div class="section-title">メニュー一覧</div>
-          <div id="home-menu-list"></div>
-        </div>
+  <div id="staff-view" class="staff-layout" style="display:none;">
+    <div class="side-nav">
+      <button class="active" data-panel="s-dashboard" onclick="showSPanel('s-dashboard')">ダッシュボード</button>
+      <button data-panel="s-reserve" onclick="showSPanel('s-reserve')">予約管理</button>
+      <button data-panel="s-karte" onclick="showSPanel('s-karte')">顧客カルテ</button>
+      <button data-panel="s-shift" onclick="showSPanel('s-shift')">シフト管理</button>
+      <button data-panel="s-menu" onclick="showSPanel('s-menu')">メニュー・価格</button>
+      <button data-panel="s-settings" onclick="showSPanel('s-settings')">設定</button>
+      <button class="logout-btn" onclick="doLogout()">ログアウト</button>
+    </div>
 
-        <div class="cscreen" id="c-menu">
-          <div class="section-title">メニュー一覧</div>
-          <div class="banner">学割対象のメニューは、価格の下に学割の割引額を表示しています（学生証をご提示ください）</div>
-          <div id="menu-list"></div>
-          <div style="height:8px;"></div>
-          <button class="btn-primary" onclick="startBooking()">選択したメニューで予約へ進む</button>
-        </div>
-
-        <div class="cscreen" id="c-date">
-          <div class="step-dots"><span class="on"></span><span></span><span></span><span></span><span></span></div>
-          <div class="section-title">来店日を選択</div>
-          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;" id="cal-month-label"></div>
-          <div class="cal-grid" id="cal-grid"></div>
-        </div>
-
-        <div class="cscreen" id="c-stylist">
-          <div class="step-dots"><span class="on"></span><span class="on"></span><span></span><span></span><span></span></div>
-          <div class="section-title">スタイリストを選択</div>
-          <div class="stylist-row" id="stylist-row"></div>
-        </div>
-
-        <div class="cscreen" id="c-time">
-          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span></span><span></span></div>
-          <div class="section-title">時間を選択</div>
-          <div style="font-size:11.5px;color:var(--text-muted);margin:-6px 0 12px;" id="time-duration-hint"></div>
-          <div class="error-banner" id="time-error"></div>
-          <div class="slot-grid" id="slot-grid"></div>
-        </div>
-
-        <div class="cscreen" id="c-info">
-          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span></span></div>
-          <div class="section-title">お客様情報</div>
-          <div class="field"><label>お名前</label><input type="text" id="in-name" placeholder="例：熊本 花子"></div>
-          <div class="field"><label>電話番号</label><input type="tel" id="in-phone" placeholder="例：09012345678"></div>
-          <div class="field-row">
-            <div class="field"><label>性別（任意）</label>
-              <select id="in-gender">
-                <option value="">回答しない</option>
-                <option value="女性">女性</option>
-                <option value="男性">男性</option>
-              </select>
-            </div>
-            <div class="field"><label>年齢（任意）</label><input type="number" id="in-age" placeholder="例：34" min="1" max="119"></div>
-          </div>
-          <div class="field"><label>ご要望（任意）</label><textarea id="in-note" placeholder="例：前回より短めにしたいです"></textarea></div>
-          <div class="field">
-            <label>なりたいスタイルの写真（任意）</label>
-            <label class="photo-upload-btn" style="width:100%;box-sizing:border-box;">＋ 写真を選択する
-              <input type="file" accept="image/*" id="in-style-photo" onchange="onStylePhotoSelected(this)">
-            </label>
-            <div id="style-photo-preview" style="margin-top:8px;"></div>
-          </div>
-          <div class="error-banner" id="stylist-error"></div>
-          <button class="btn-primary" onclick="goConfirm()">確認画面へ</button>
-        </div>
-
-        <div class="cscreen" id="c-confirm">
-          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
-          <div class="section-title">予約内容の確認</div>
-          <div class="summary-box" id="confirm-summary"></div>
-          <div class="error-banner" id="confirm-error"></div>
-          <button class="btn-primary" id="btn-confirm" onclick="finishBooking()">この内容で予約する</button>
-          <button class="btn-ghost" onclick="showCScreen('c-stylist')">戻って修正する</button>
-        </div>
-
-        <div class="cscreen" id="c-success">
-          <div class="success-wrap">
-            <div class="check">✓</div>
-            <div style="font-weight:700;font-size:15px;">ご予約が完了しました</div>
-            <div style="font-size:12.5px;color:var(--text-muted);margin-top:6px;">当日はお気をつけてお越しください</div>
-          </div>
-          <button class="btn-primary" onclick="showCScreen('c-home')">ホームに戻る</button>
-        </div>
-
-        <div class="cscreen" id="c-mypage">
-          <div class="section-title">マイページ</div>
-          <div id="mypage-lookup">
-            <div class="field"><label>電話番号でご予約状況を確認</label><input type="tel" id="mp-phone" placeholder="ご登録の電話番号"></div>
-            <button class="btn-primary" onclick="lookupMyPage()">照会する</button>
-            <div class="error-banner" id="mypage-error"></div>
-          </div>
-          <div id="mypage-result" style="display:none;">
-            <div class="member-card">
-              <div class="rank" id="mp-rank"></div>
-              <div class="pts" id="mp-pts"></div>
-            </div>
-            <div class="section-title">予約履歴</div>
-            <div class="list-card" id="mp-history"></div>
-            <button class="btn-ghost" onclick="resetMyPage()">別の電話番号で照会する</button>
+    <div>
+      <div class="staff-panel active" id="s-dashboard">
+        <div class="stat-row" id="dash-stats"></div>
+        <div class="panel-card">
+          <h3>週間売上（実績・実データ集計）</h3>
+          <div class="chart-wrap">
+            <svg class="bars-svg" id="sales-chart"></svg>
+            <div class="bar-tip" id="bar-tip"></div>
           </div>
         </div>
-
+        <div class="panel-card">
+          <h3>本日の予約</h3>
+          <table class="data">
+            <thead><tr><th>時間</th><th>お客様</th><th>メニュー</th><th>担当</th><th>状況</th></tr></thead>
+            <tbody id="dash-reserve-body"></tbody>
+          </table>
+        </div>
+        <div class="panel-card">
+          <h3>メニューカテゴリー別 お客様数・割合</h3>
+          <p style="font-size:11.5px;color:var(--text-muted);margin-top:0;">それぞれのメニューを一度でも予約したことがあるお客様の人数・全体に対する割合（キャンセルを除く全期間）</p>
+          <div class="bar-list" id="stat-categories"></div>
+        </div>
+        <div class="stat-grid-2">
+          <div class="panel-card">
+            <h3>男女別</h3>
+            <div class="bar-list" id="stat-gender"></div>
+          </div>
+          <div class="panel-card">
+            <h3>年齢別</h3>
+            <div class="bar-list" id="stat-age"></div>
+          </div>
+        </div>
       </div>
-      <div class="phone-tabbar">
-        <button class="active" data-tab="c-home" onclick="showCScreen('c-home')"><span class="ic"></span>ホーム</button>
-        <button data-tab="c-menu" onclick="showCScreen('c-menu')"><span class="ic"></span>メニュー</button>
-        <button data-tab="c-date" onclick="startBooking()"><span class="ic"></span>予約</button>
-        <button data-tab="c-mypage" onclick="showCScreen('c-mypage')"><span class="ic"></span>マイページ</button>
+
+      <div class="staff-panel" id="s-reserve">
+        <div class="panel-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <h3 style="margin:0;">予約一覧</h3>
+            <input type="date" id="reserve-date" onchange="loadReserveDate()">
+          </div>
+          <table class="data">
+            <thead><tr><th>時間</th><th>お客様</th><th>電話番号</th><th>メニュー</th><th>担当</th><th>金額</th><th>希望写真</th><th>状況</th></tr></thead>
+            <tbody id="reserve-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="staff-panel" id="s-karte">
+        <div class="panel-card">
+          <h3>顧客カルテ</h3>
+          <div class="cust-grid">
+            <div class="cust-list" id="cust-list"></div>
+            <div id="karte-detail"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="staff-panel" id="s-shift">
+        <div class="panel-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <h3 style="margin:0;">週間シフト</h3>
+            <div>
+              <button class="btn-ghost" style="width:auto;display:inline;" onclick="shiftWeek(-7)">← 前週</button>
+              <button class="btn-ghost" style="width:auto;display:inline;" onclick="shiftWeek(7)">次週 →</button>
+            </div>
+          </div>
+          <p style="font-size:11.5px;color:var(--text-muted);margin-top:0;">セルをクリックすると 休み → 9-18 → 10-19 の順で切り替わります（実際にサーバーへ保存されます）</p>
+          <div class="shift-grid" id="shift-grid"></div>
+        </div>
+      </div>
+
+      <div class="staff-panel" id="s-menu">
+        <div class="panel-card">
+          <h3>メニューを追加</h3>
+          <div class="inline-form">
+            <input type="text" id="menu-new-name" placeholder="メニュー名（例：カット）">
+            <input type="text" id="menu-new-meta" placeholder="説明（任意・例：シャンプー込み）">
+            <input type="number" id="menu-new-price" placeholder="価格（円）">
+            <input type="number" id="menu-new-duration" placeholder="所要時間（分）">
+            <input type="number" id="menu-new-discount" placeholder="学割引額（円・任意）">
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;">
+              <input type="checkbox" id="menu-new-from" style="accent-color:var(--brand);">目安価格（〜表示）
+            </label>
+            <button onclick="addMenu()">追加する</button>
+          </div>
+          <div class="error-banner" id="menu-error"></div>
+        </div>
+        <div class="panel-card">
+          <h3>メニュー一覧</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">「目安価格」にチェックすると、お客様向けの画面で価格が「¥6,600〜」のように表示されます（カラー・パーマなど、髪の長さ等で料金が変わるメニュー向け）。「学割引額」に金額を入れると、お客様向けの価格の下に「学割 -¥500」のように表示されます（0円または空欄なら非表示）。</p>
+          <table class="data">
+            <thead><tr><th>メニュー名</th><th>説明</th><th>価格</th><th>目安</th><th>学割引額</th><th>所要時間</th><th></th></tr></thead>
+            <tbody id="menu-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="staff-panel" id="s-settings">
+        <div class="panel-card">
+          <h3>営業時間・定休日</h3>
+          <div class="field" style="max-width:200px;display:inline-block;margin-right:16px;">
+            <label>開店時刻</label><input type="time" id="set-open">
+          </div>
+          <div class="field" style="max-width:200px;display:inline-block;">
+            <label>閉店時刻</label><input type="time" id="set-close">
+          </div>
+          <div class="field">
+            <label>定休日（複数選択可・毎週決まった曜日が休みの場合）</label>
+            <div id="set-closed-weekdays" style="display:flex;gap:14px;flex-wrap:wrap;"></div>
+          </div>
+        </div>
+
+        <button class="btn-primary" style="max-width:240px;" onclick="saveSettings()">設定を保存</button>
+        <div class="error-banner" id="settings-msg" style="margin-top:12px;"></div>
+
+        <div class="panel-card" style="margin-top:18px;">
+          <h3>臨時休業日（不定休）</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">曜日が決まっていない休みは、こちらでカレンダーから日付を指定して登録してください。登録した日はお客様の予約カレンダーで自動的に選択できなくなります。</p>
+          <div class="field-row" style="align-items:flex-end;">
+            <div class="field" style="max-width:220px;">
+              <label>休業日にする日付</label><input type="date" id="closed-date-input">
+            </div>
+            <button class="btn-primary" style="max-width:160px;" onclick="addClosedDate()">この日を休業日にする</button>
+          </div>
+          <div class="error-banner" id="closed-date-msg" style="margin-top:10px;"></div>
+          <div id="closed-date-list" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
       </div>
     </div>
   </div>
-  <footer class="note">GARNI アプリ &middot; ご入力いただいた情報は実際にサーバーへ保存されます</footer>
+
+  <footer class="note">GARNI アプリ スタッフ管理画面 &middot; データは実際にサーバーへ保存されます</footer>
 </div>
 
 <script src="/static/shared/photo.js"></script>
-<script src="/static/customer/app.js"></script>
+<script src="/static/staff/app.js"></script>
 </body>
 </html>
