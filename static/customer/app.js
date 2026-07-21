@@ -6,6 +6,8 @@ let SETTINGS = { closedWeekdays: [] };
 let selectedMenus = new Set();
 let booking = { date: null, dateLabel: null, stylistId: null, stylistName: null, time: null };
 let stylePhotoDataUrl = null;
+let mpReservations = [];
+let mpEditPhotos = {};
 const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
 
 async function api(path, options) {
@@ -118,9 +120,10 @@ async function renderSlots() {
   const grid = document.getElementById("slot-grid");
   grid.innerHTML = `<div style="font-size:12px;color:var(--text-muted);">読み込み中...</div>`;
   const duration = totalDurationMin();
+  const menuIds = [...selectedMenus].join(",");
   document.getElementById("time-duration-hint").textContent = `合計所要時間：約${duration}分`;
   try {
-    const data = await api(`/api/availability?date=${booking.date}&stylistId=${booking.stylistId}&durationMin=${duration}`);
+    const data = await api(`/api/availability?date=${booking.date}&stylistId=${booking.stylistId}&durationMin=${duration}&menuIds=${encodeURIComponent(menuIds)}`);
     if (data.reason === "closed_weekday" || data.reason === "closed_date") {
       grid.innerHTML = "";
       errBox.textContent = "この日は休業日です。別の日を選んでください。";
@@ -132,6 +135,9 @@ async function renderSlots() {
       errBox.textContent = "この日は担当スタイリストが休みです。別の日を選んでください。";
       errBox.classList.add("show");
       return;
+    }
+    if (data.lastOrderTime) {
+      document.getElementById("time-duration-hint").textContent += `／選択したメニューの最終受付：${data.lastOrderTime}`;
     }
     grid.innerHTML = data.slots.map(s => `
       <button ${s.available ? "" : "disabled"} onclick="selectTime('${s.time}')" id="slot-${s.time.replace(":", "")}">${s.time}</button>
@@ -251,24 +257,119 @@ async function lookupMyPage() {
     document.getElementById("mypage-result").style.display = "block";
     document.getElementById("mp-rank").textContent = "会員ランク：" + data.customer.rank;
     document.getElementById("mp-pts").textContent = data.customer.points.toLocaleString() + " pt";
-    document.getElementById("mp-history").innerHTML = data.reservations.map(r => {
-      const badge = r.status === "visited" ? '<span class="badge done">来店済み</span>'
-                  : r.status === "cancel" ? '<span class="badge cancel">キャンセル</span>'
-                  : '<span class="badge upcoming">予約済</span>';
-      return `<div class="hist-item">
-        <div><div style="font-weight:700;">${r.menu_names}</div><div class="d">${r.date} ${r.time}</div></div>
-        ${badge}
-      </div>`;
-    }).join("") || `<div style="font-size:12.5px;color:var(--text-muted);">予約履歴はまだありません</div>`;
+    mpEditPhotos = {};
+    mpReservations = data.reservations;
+    renderMpHistory();
   } catch (e) {
     errBox.textContent = "取得に失敗しました。もう一度お試しください。";
     errBox.classList.add("show");
   }
 }
+
+function mpPhotoHtml(path, label, placeholder) {
+  return `<div class="ph-col">
+    <div class="ph-label">${label}</div>
+    ${path
+      ? `<a href="${path}" target="_blank"><img class="thumb-lg" src="${path}"></a>`
+      : `<div style="font-size:11px;color:var(--text-muted);">${placeholder}</div>`}
+  </div>`;
+}
+
+function mpHistoryItemHtml(r) {
+  const badge = r.status === "visited" ? '<span class="badge done">来店済み</span>'
+              : r.status === "cancel" ? '<span class="badge cancel">キャンセル</span>'
+              : '<span class="badge upcoming">予約済</span>';
+  const isWait = r.status === "wait";
+  const staged = mpEditPhotos[r.id];
+  const stylePhotoForDisplay = staged || r.style_photo_path;
+  let editSection = "";
+  if (isWait) {
+    const noteVal = (r.note || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    editSection = `
+      <div class="field" style="margin-top:10px;">
+        <label>ご要望・リクエスト</label>
+        <textarea id="mp-note-${r.id}" placeholder="例：前回より短めにしたいです">${noteVal}</textarea>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <label class="photo-upload-btn">
+          ＋ 希望スタイル写真を選ぶ
+          <input type="file" accept="image/*" onchange="onMpPhotoSelected('${r.id}', this)">
+        </label>
+        <div id="mp-photo-preview-${r.id}">${staged ? `<img src="${staged}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;">` : ""}</div>
+      </div>
+      <div class="error-banner" id="mp-msg-${r.id}" style="margin-top:8px;"></div>
+      <button class="btn-primary" style="margin-top:8px;max-width:160px;" onclick="saveMyPageEdit('${r.id}')">保存する</button>
+    `;
+  } else if (r.note) {
+    editSection = `<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">ご要望：${r.note}</div>`;
+  }
+  return `
+    <div class="hist-block">
+      <div class="hist-item">
+        <div><div style="font-weight:700;">${r.menu_names}</div><div class="d">${r.date} ${r.time}</div></div>
+        ${badge}
+      </div>
+      <div class="photo-pair">
+        ${mpPhotoHtml(stylePhotoForDisplay, "希望スタイル", "写真なし")}
+        ${mpPhotoHtml(r.after_photo_path, "施術後", isWait ? "来店後に追加されます" : "写真なし")}
+      </div>
+      ${editSection}
+    </div>`;
+}
+
+function renderMpHistory() {
+  document.getElementById("mp-history").innerHTML = mpReservations.map(mpHistoryItemHtml).join("")
+    || `<div style="font-size:12.5px;color:var(--text-muted);">予約履歴はまだありません</div>`;
+}
+
+async function onMpPhotoSelected(id, input) {
+  const preview = document.getElementById(`mp-photo-preview-${id}`);
+  if (!input.files || !input.files[0]) return;
+  try {
+    const dataUrl = await resizeImageFileToDataUrl(input.files[0]);
+    mpEditPhotos[id] = dataUrl;
+    if (preview) preview.innerHTML = `<img src="${dataUrl}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;">`;
+  } catch (e) {
+    if (preview) preview.innerHTML = `<div style="font-size:11px;color:var(--warning);">写真の読み込みに失敗しました</div>`;
+  }
+}
+
+async function saveMyPageEdit(id) {
+  const msgBox = document.getElementById(`mp-msg-${id}`);
+  if (msgBox) msgBox.classList.remove("show");
+  try {
+    const phone = document.getElementById("mp-phone").value.trim();
+    const noteEl = document.getElementById(`mp-note-${id}`);
+    const note = noteEl ? noteEl.value.trim() : "";
+    const body = { phone, note };
+    if (mpEditPhotos[id]) body.stylePhoto = mpEditPhotos[id];
+    const updated = await api(`/api/mypage/reservations/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    delete mpEditPhotos[id];
+    const idx = mpReservations.findIndex(r => r.id === id);
+    if (idx !== -1) mpReservations[idx] = updated;
+    renderMpHistory();
+    const newMsgBox = document.getElementById(`mp-msg-${id}`);
+    if (newMsgBox) {
+      newMsgBox.textContent = "保存しました。";
+      newMsgBox.style.background = "#e7f6e7";
+      newMsgBox.style.borderColor = "var(--good)";
+      newMsgBox.style.color = "#0a6b0a";
+      newMsgBox.classList.add("show");
+    }
+  } catch (e) {
+    if (msgBox) {
+      msgBox.textContent = "保存に失敗しました：" + e.message;
+      msgBox.classList.add("show");
+    }
+  }
+}
+
 function resetMyPage() {
   document.getElementById("mypage-lookup").style.display = "block";
   document.getElementById("mypage-result").style.display = "none";
   document.getElementById("mp-phone").value = "";
+  mpReservations = [];
+  mpEditPhotos = {};
 }
 
 async function init() {
