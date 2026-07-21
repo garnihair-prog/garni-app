@@ -146,6 +146,12 @@ def closed_weekdays_set(settings):
     return {int(x) for x in raw.split(",") if x.strip().isdigit()}
 
 
+def closed_dates_set(conn):
+    """不定休など、個別に指定された臨時休業日（YYYY-MM-DD）の集合を返す。"""
+    rows = conn.execute("SELECT date FROM closed_dates").fetchall()
+    return {r["date"] for r in rows}
+
+
 def weekday_js(date_str):
     """YYYY-MM-DD -> JS流の曜日番号 (0=日曜 ... 6=土曜)"""
     d = datetime.date.fromisoformat(date_str)
@@ -274,6 +280,9 @@ class Handler(BaseHTTPRequestHandler):
             if weekday_js(date) in closed_weekdays_set(settings):
                 conn.close()
                 return self.send_json(200, {"slots": [], "reason": "closed_weekday"})
+            if date in closed_dates_set(conn):
+                conn.close()
+                return self.send_json(200, {"slots": [], "reason": "closed_date"})
             shift = conn.execute(
                 "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
             ).fetchone()
@@ -326,11 +335,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/settings":
             conn = db.get_conn()
             settings = get_settings(conn)
+            closed_dates = sorted(closed_dates_set(conn))
             conn.close()
             return self.send_json(200, {
                 "openTime": settings["open_time"],
                 "closeTime": settings["close_time"],
                 "closedWeekdays": sorted(closed_weekdays_set(settings)),
+                "closedDates": closed_dates,
             })
 
         # ---- staff API (auth required) ----
@@ -339,11 +350,13 @@ class Handler(BaseHTTPRequestHandler):
                 return
             conn = db.get_conn()
             settings = get_settings(conn)
+            closed_dates = sorted(closed_dates_set(conn))
             conn.close()
             return self.send_json(200, {
                 "openTime": settings["open_time"],
                 "closeTime": settings["close_time"],
                 "closedWeekdays": sorted(closed_weekdays_set(settings)),
+                "closedDates": closed_dates,
             })
         if path == "/api/staff/reservations":
             if not self.require_staff():
@@ -542,6 +555,9 @@ class Handler(BaseHTTPRequestHandler):
             if weekday_js(date) in closed_weekdays_set(settings):
                 conn.close()
                 return self.send_json(409, {"error": "その日は定休日です"})
+            if date in closed_dates_set(conn):
+                conn.close()
+                return self.send_json(409, {"error": "その日は臨時休業日です"})
             menu_rows, total_duration, total_price = menu_duration_total(conn, menu_ids)
             if not menu_rows:
                 conn.close()
@@ -648,6 +664,19 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return self.send_json(200, {"ok": True})
 
+        if path == "/api/staff/closed-dates":
+            if not self.require_staff():
+                return
+            date = body.get("date")
+            if not date or not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+                return self.send_json(400, {"error": "日付を正しく指定してください"})
+            conn = db.get_conn()
+            conn.execute("INSERT OR IGNORE INTO closed_dates (date, created_at) VALUES (?, ?)", (date, db.now_iso()))
+            conn.commit()
+            rows = conn.execute("SELECT date FROM closed_dates ORDER BY date").fetchall()
+            conn.close()
+            return self.send_json(201, {"closedDates": [r["date"] for r in rows]})
+
         if path == "/api/staff/menus":
             if not self.require_staff():
                 return
@@ -657,12 +686,13 @@ class Handler(BaseHTTPRequestHandler):
             if not name or not isinstance(price, (int, float)) or price < 0 or not isinstance(duration_min, (int, float)) or duration_min <= 0:
                 return self.send_json(400, {"error": "メニュー名・価格・所要時間を正しく入力してください"})
             meta = (body.get("meta") or "").strip()
+            price_is_from = 1 if body.get("priceIsFrom") else 0
             conn = db.get_conn()
             max_sort = conn.execute("SELECT COALESCE(MAX(sort_order), -1) m FROM menu_items").fetchone()["m"]
             mid = db.new_id()
             conn.execute(
-                "INSERT INTO menu_items (id, name, meta, price, duration_min, sort_order) VALUES (?,?,?,?,?,?)",
-                (mid, name, meta, int(price), int(duration_min), max_sort + 1),
+                "INSERT INTO menu_items (id, name, meta, price, price_is_from, duration_min, sort_order) VALUES (?,?,?,?,?,?,?)",
+                (mid, name, meta, int(price), price_is_from, int(duration_min), max_sort + 1),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM menu_items WHERE id=?", (mid,)).fetchone()
@@ -706,6 +736,17 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return self.send_json(200, {"ok": True})
 
+        m = re.match(r"^/api/staff/closed-dates/(\d{4}-\d{2}-\d{2})$", path)
+        if m:
+            if not self.require_staff():
+                return
+            date = m.group(1)
+            conn = db.get_conn()
+            conn.execute("DELETE FROM closed_dates WHERE date=?", (date,))
+            conn.commit()
+            conn.close()
+            return self.send_json(200, {"ok": True})
+
         return self.send_json(404, {"error": "not found"})
 
     def do_PATCH(self):
@@ -727,12 +768,13 @@ class Handler(BaseHTTPRequestHandler):
             meta = body.get("meta", existing["meta"])
             price = body.get("price", existing["price"])
             duration_min = body.get("durationMin", existing["duration_min"])
+            price_is_from = 1 if body.get("priceIsFrom", existing["price_is_from"]) else 0
             if not name or not isinstance(price, (int, float)) or price < 0 or not isinstance(duration_min, (int, float)) or duration_min <= 0:
                 conn.close()
                 return self.send_json(400, {"error": "メニュー名・価格・所要時間を正しく入力してください"})
             conn.execute(
-                "UPDATE menu_items SET name=?, meta=?, price=?, duration_min=? WHERE id=?",
-                (name, meta, int(price), int(duration_min), mid),
+                "UPDATE menu_items SET name=?, meta=?, price=?, price_is_from=?, duration_min=? WHERE id=?",
+                (name, meta, int(price), price_is_from, int(duration_min), mid),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM menu_items WHERE id=?", (mid,)).fetchone()

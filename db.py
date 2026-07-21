@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS menu_items (
     name TEXT NOT NULL,
     meta TEXT,
     price INTEGER NOT NULL,
+    price_is_from INTEGER NOT NULL DEFAULT 0,  -- 1の場合、お客様向け表示は「¥○○〜」（目安価格）になる
     duration_min INTEGER NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0
 );
@@ -82,6 +83,11 @@ CREATE TABLE IF NOT EXISTS salon_settings (
     closed_weekdays TEXT NOT NULL DEFAULT '1',   -- comma区切り。0=日,1=月,...,6=土
     updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS closed_dates (
+    date TEXT PRIMARY KEY,     -- YYYY-MM-DD。不定休など、特定の日だけを臨時休業日にする
+    created_at TEXT
+);
 """
 
 
@@ -128,6 +134,20 @@ def init_db():
     karte_cols = {row["name"] for row in conn.execute("PRAGMA table_info(karte_entries)").fetchall()}
     if "photo_path" not in karte_cols:
         conn.execute("ALTER TABLE karte_entries ADD COLUMN photo_path TEXT")
+    # 既存DBに menu_items.price_is_from 列が無ければ追加する（旧バージョンからの移行）
+    menu_cols = {row["name"] for row in conn.execute("PRAGMA table_info(menu_items)").fetchall()}
+    if "price_is_from" not in menu_cols:
+        conn.execute("ALTER TABLE menu_items ADD COLUMN price_is_from INTEGER NOT NULL DEFAULT 0")
+    # 個人店化に伴い、旧サンプルのスタイリストA/B（従業員なし）を削除する（旧バージョンからの移行）。
+    # 該当スタイリストの予約は店長（s-m）に付け替え、シフトは削除する。
+    old_ids = [row["id"] for row in conn.execute(
+        "SELECT id FROM stylists WHERE id IN ('s-a', 's-b')"
+    ).fetchall()]
+    if old_ids:
+        placeholders = ",".join("?" * len(old_ids))
+        conn.execute(f"UPDATE reservations SET stylist_id='s-m' WHERE stylist_id IN ({placeholders})", old_ids)
+        conn.execute(f"DELETE FROM shifts WHERE stylist_id IN ({placeholders})", old_ids)
+        conn.execute(f"DELETE FROM stylists WHERE id IN ({placeholders})", old_ids)
     conn.commit()
     conn.close()
 
@@ -138,8 +158,6 @@ def seed(conn):
 
     stylists = [
         ("s-m", "店長 GARNI", "店長", 0),
-        ("s-a", "スタイリストA", "スタイリスト", 1),
-        ("s-b", "スタイリストB", "アシスタント", 2),
     ]
     cur.executemany(
         "INSERT INTO stylists (id, name, role, sort_order) VALUES (?,?,?,?)", stylists
@@ -185,11 +203,13 @@ def seed(conn):
     # メニュー名 -> 所要時間(分) のマップ（座席重複チェック用）
     duration_by_menu = {m[1]: m[4] for m in menus}
 
+    # 1人で対応するため、同じ日でも予約時間が重ならないように順番に並べる
+    # （カラー10:00-12:00 → カット12:00-13:00 → パーマ13:00-15:00 → 縮毛矯正15:00-18:00）
     reservations = [
         ("c-1", "田中 美咲", "09011110001", "2026-07-19", "10:00", "s-m", "カラー", 6600, "visited"),
-        ("c-4", "高橋 直人", "09044440004", "2026-07-19", "11:30", "s-a", "カット", 4400, "visited"),
-        ("c-3", "鈴木 あかり", "09033330003", "2026-07-19", "13:00", "s-b", "パーマ", 8800, "wait"),
-        ("c-2", "佐藤 ひろし", "09022220002", "2026-07-19", "14:30", "s-m", "縮毛矯正", 11000, "wait"),
+        ("c-4", "高橋 直人", "09044440004", "2026-07-19", "12:00", "s-m", "カット", 4400, "visited"),
+        ("c-3", "鈴木 あかり", "09033330003", "2026-07-19", "13:00", "s-m", "パーマ", 8800, "wait"),
+        ("c-2", "佐藤 ひろし", "09022220002", "2026-07-19", "15:00", "s-m", "縮毛矯正", 11000, "wait"),
     ]
     cur.executemany(
         """INSERT INTO reservations
@@ -205,8 +225,6 @@ def seed(conn):
     shift_days = ["2026-07-20", "2026-07-21", "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-25", "2026-07-26"]
     shift_map = {
         "s-m": ["off", "10-19", "10-19", "10-19", "10-19", "9-18", "9-18"],
-        "s-a": ["10-19", "off", "10-19", "10-19", "10-19", "9-18", "9-18"],
-        "s-b": ["10-19", "10-19", "off", "10-19", "10-19", "9-18", "off"],
     }
     shift_rows = []
     for sid, labels in shift_map.items():
