@@ -163,6 +163,13 @@ def business_hours_range(settings):
 class Handler(BaseHTTPRequestHandler):
     server_version = "GarniApp/1.0"
 
+    def do_HEAD(self):
+        # Render等のホスティングサービスがヘルスチェックでHEADリクエストを送ってくることがあるため、
+        # 常に200 OKを返す（ログに 501 Unsupported method が出るのを防ぐ）。
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def log_message(self, fmt, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
