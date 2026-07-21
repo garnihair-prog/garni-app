@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>GARNI アプリ</title>
+<link rel="stylesheet" href="/static/shared/styles.css">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#a9765c">
+<link rel="icon" href="/static/favicon.ico">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icons/icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="GARNI">
+</head>
+<body>
+<div class="app-shell">
+  <header class="top">
+    <div class="brand">
+      <div class="mark">G</div>
+      <div>
+        <div class="name">GARNI アプリ</div>
+        <div class="sub">お客様向け</div>
+      </div>
+    </div>
+    <a class="switch-link" href="/staff">スタッフの方はこちら</a>
+  </header>
+
+  <div class="phone-wrap">
+    <div class="phone">
+      <div class="phone-notch"></div>
+      <div class="phone-screen">
+
+        <div class="cscreen active" id="c-home">
+          <div class="hero">
+            <div>
+              <div class="h1">GARNI 熊本店</div>
+              <div class="h2">ご来店いつもありがとうございます</div>
+            </div>
+          </div>
+          <div class="quick-actions">
+            <button onclick="startBooking()">予約する</button>
+            <button class="secondary" onclick="showCScreen('c-menu')">メニューを見る</button>
+          </div>
+          <div class="section-title">メニュー一覧</div>
+          <div id="home-menu-list"></div>
+        </div>
+
+        <div class="cscreen" id="c-menu">
+          <div class="section-title">メニュー一覧</div>
+          <div class="banner">学割対象のメニューは、価格の下に学割の割引額を表示しています（学生証をご提示ください）</div>
+          <div id="menu-list"></div>
+          <div style="height:8px;"></div>
+          <button class="btn-primary" onclick="startBooking()">選択したメニューで予約へ進む</button>
+        </div>
+
+        <div class="cscreen" id="c-date">
+          <div class="step-dots"><span class="on"></span><span></span><span></span><span></span><span></span></div>
+          <div class="section-title">来店日を選択</div>
+          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;" id="cal-month-label"></div>
+          <div class="cal-grid" id="cal-grid"></div>
+        </div>
+
+        <div class="cscreen" id="c-stylist">
+          <div class="step-dots"><span class="on"></span><span class="on"></span><span></span><span></span><span></span></div>
+          <div class="section-title">スタイリストを選択</div>
+          <div class="stylist-row" id="stylist-row"></div>
+        </div>
+
+        <div class="cscreen" id="c-time">
+          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span></span><span></span></div>
+          <div class="section-title">時間を選択</div>
+          <div style="font-size:11.5px;color:var(--text-muted);margin:-6px 0 12px;" id="time-duration-hint"></div>
+          <div class="error-banner" id="time-error"></div>
+          <div class="slot-grid" id="slot-grid"></div>
+        </div>
+
+        <div class="cscreen" id="c-info">
+          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span></span></div>
+          <div class="section-title">お客様情報</div>
+          <div class="field"><label>お名前</label><input type="text" id="in-name" placeholder="例：熊本 花子"></div>
+          <div class="field"><label>電話番号</label><input type="tel" id="in-phone" placeholder="例：09012345678"></div>
+          <div class="field-row">
+            <div class="field"><label>性別（任意）</label>
+              <select id="in-gender">
+                <option value="">回答しない</option>
+                <option value="女性">女性</option>
+                <option value="男性">男性</option>
+              </select>
+            </div>
+            <div class="field"><label>年齢（任意）</label><input type="number" id="in-age" placeholder="例：34" min="1" max="119"></div>
+          </div>
+          <div class="field"><label>ご要望（任意）</label><textarea id="in-note" placeholder="例：前回より短めにしたいです"></textarea></div>
+          <div class="field">
+            <label>なりたいスタイルの写真（任意）</label>
+            <label class="photo-upload-btn" style="width:100%;box-sizing:border-box;">＋ 写真を選択する
+              <input type="file" accept="image/*" id="in-style-photo" onchange="onStylePhotoSelected(this)">
+            </label>
+            <div id="style-photo-preview" style="margin-top:8px;"></div>
+          </div>
+          <div class="error-banner" id="stylist-error"></div>
+          <button class="btn-primary" onclick="goConfirm()">確認画面へ</button>
+        </div>
+
+        <div class="cscreen" id="c-confirm">
+          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
+          <div class="section-title">予約内容の確認</div>
+          <div class="summary-box" id="confirm-summary"></div>
+          <div class="error-banner" id="confirm-error"></div>
+          <button class="btn-primary" id="btn-confirm" onclick="finishBooking()">この内容で予約する</button>
+          <button class="btn-ghost" onclick="showCScreen('c-stylist')">戻って修正する</button>
+        </div>
+
+        <div class="cscreen" id="c-success">
+          <div class="success-wrap">
+            <div class="check">✓</div>
+            <div style="font-weight:700;font-size:15px;">ご予約が完了しました</div>
+            <div style="font-size:12.5px;color:var(--text-muted);margin-top:6px;">当日はお気をつけてお越しください</div>
+          </div>
+          <button class="btn-primary" onclick="showCScreen('c-home')">ホームに戻る</button>
+        </div>
+
+        <div class="cscreen" id="c-mypage">
+          <div class="section-title">マイページ</div>
+          <div id="mypage-lookup">
+            <div class="field"><label>電話番号でご予約状況を確認</label><input type="tel" id="mp-phone" placeholder="ご登録の電話番号"></div>
+            <button class="btn-primary" onclick="lookupMyPage()">照会する</button>
+            <div class="error-banner" id="mypage-error"></div>
+          </div>
+          <div id="mypage-result" style="display:none;">
+            <div class="member-card">
+              <div class="rank" id="mp-rank"></div>
+              <div class="pts" id="mp-pts"></div>
+            </div>
+            <div class="section-title">予約履歴</div>
+            <div class="list-card" id="mp-history"></div>
+            <button class="btn-ghost" onclick="resetMyPage()">別の電話番号で照会する</button>
+          </div>
+        </div>
+
+      </div>
+      <div class="phone-tabbar">
+        <button class="active" data-tab="c-home" onclick="showCScreen('c-home')"><span class="ic"></span>ホーム</button>
+        <button data-tab="c-menu" onclick="showCScreen('c-menu')"><span class="ic"></span>メニュー</button>
+        <button data-tab="c-date" onclick="startBooking()"><span class="ic"></span>予約</button>
+        <button data-tab="c-mypage" onclick="showCScreen('c-mypage')"><span class="ic"></span>マイページ</button>
+      </div>
+    </div>
+  </div>
+  <footer class="note">GARNI アプリ &middot; ご入力いただいた情報は実際にサーバーへ保存されます</footer>
+</div>
+
+<script src="/static/shared/photo.js"></script>
+<script src="/static/customer/app.js"></script>
+</body>
+</html>
