@@ -121,8 +121,9 @@ header.top a.switch-link { font-size: 12.5px; color: var(--brand-dark); text-dec
 .member-card .rank { font-size: 11px; opacity: .85; }
 .member-card .pts { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 4px 0; }
 
-.hist-item { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--gridline); font-size: 12.5px; }
-.hist-item:last-child { border-bottom: none; }
+.hist-block { padding: 12px 0; border-bottom: 1px solid var(--gridline); }
+.hist-block:last-child { border-bottom: none; }
+.hist-item { display: flex; justify-content: space-between; font-size: 12.5px; }
 .hist-item .d { color: var(--text-muted); font-size: 11px; }
 .badge { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px; }
 .badge.done { background: #e7f6e7; color: var(--good); }
