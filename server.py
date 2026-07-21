@@ -687,12 +687,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": "メニュー名・価格・所要時間を正しく入力してください"})
             meta = (body.get("meta") or "").strip()
             price_is_from = 1 if body.get("priceIsFrom") else 0
+            student_discount = body.get("studentDiscount", 0)
+            if not isinstance(student_discount, (int, float)) or student_discount < 0:
+                student_discount = 0
             conn = db.get_conn()
             max_sort = conn.execute("SELECT COALESCE(MAX(sort_order), -1) m FROM menu_items").fetchone()["m"]
             mid = db.new_id()
             conn.execute(
-                "INSERT INTO menu_items (id, name, meta, price, price_is_from, duration_min, sort_order) VALUES (?,?,?,?,?,?,?)",
-                (mid, name, meta, int(price), price_is_from, int(duration_min), max_sort + 1),
+                "INSERT INTO menu_items (id, name, meta, price, price_is_from, student_discount, duration_min, sort_order) VALUES (?,?,?,?,?,?,?,?)",
+                (mid, name, meta, int(price), price_is_from, int(student_discount), int(duration_min), max_sort + 1),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM menu_items WHERE id=?", (mid,)).fetchone()
@@ -769,12 +772,15 @@ class Handler(BaseHTTPRequestHandler):
             price = body.get("price", existing["price"])
             duration_min = body.get("durationMin", existing["duration_min"])
             price_is_from = 1 if body.get("priceIsFrom", existing["price_is_from"]) else 0
+            student_discount = body.get("studentDiscount", existing["student_discount"])
+            if not isinstance(student_discount, (int, float)) or student_discount < 0:
+                student_discount = existing["student_discount"]
             if not name or not isinstance(price, (int, float)) or price < 0 or not isinstance(duration_min, (int, float)) or duration_min <= 0:
                 conn.close()
                 return self.send_json(400, {"error": "メニュー名・価格・所要時間を正しく入力してください"})
             conn.execute(
-                "UPDATE menu_items SET name=?, meta=?, price=?, price_is_from=?, duration_min=? WHERE id=?",
-                (name, meta, int(price), price_is_from, int(duration_min), mid),
+                "UPDATE menu_items SET name=?, meta=?, price=?, price_is_from=?, student_discount=?, duration_min=? WHERE id=?",
+                (name, meta, int(price), price_is_from, int(student_discount), int(duration_min), mid),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM menu_items WHERE id=?", (mid,)).fetchone()

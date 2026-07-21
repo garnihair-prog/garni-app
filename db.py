@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS menu_items (
     meta TEXT,
     price INTEGER NOT NULL,
     price_is_from INTEGER NOT NULL DEFAULT 0,  -- 1の場合、お客様向け表示は「¥○○〜」（目安価格）になる
+    student_discount INTEGER NOT NULL DEFAULT 0,  -- 学割の割引額（円）。0の場合は学割なし
     duration_min INTEGER NOT NULL,
     sort_order INTEGER NOT NULL DEFAULT 0
 );
@@ -134,10 +135,14 @@ def init_db():
     karte_cols = {row["name"] for row in conn.execute("PRAGMA table_info(karte_entries)").fetchall()}
     if "photo_path" not in karte_cols:
         conn.execute("ALTER TABLE karte_entries ADD COLUMN photo_path TEXT")
-    # 既存DBに menu_items.price_is_from 列が無ければ追加する（旧バージョンからの移行）
+    # 既存DBに menu_items.price_is_from / student_discount 列が無ければ追加する（旧バージョンからの移行）
     menu_cols = {row["name"] for row in conn.execute("PRAGMA table_info(menu_items)").fetchall()}
     if "price_is_from" not in menu_cols:
         conn.execute("ALTER TABLE menu_items ADD COLUMN price_is_from INTEGER NOT NULL DEFAULT 0")
+    if "student_discount" not in menu_cols:
+        conn.execute("ALTER TABLE menu_items ADD COLUMN student_discount INTEGER NOT NULL DEFAULT 0")
+        # 移行時、既存メニューの「カラー」「パーマ」には自動で学割500円引きを設定する
+        conn.execute("UPDATE menu_items SET student_discount=500 WHERE name IN ('カラー', 'パーマ')")
     # 個人店化に伴い、旧サンプルのスタイリストA/B（従業員なし）を削除する（旧バージョンからの移行）。
     # 該当スタイリストの予約は店長（s-m）に付け替え、シフトは削除する。
     old_ids = [row["id"] for row in conn.execute(
@@ -163,15 +168,16 @@ def seed(conn):
         "INSERT INTO stylists (id, name, role, sort_order) VALUES (?,?,?,?)", stylists
     )
 
+    # (id, name, meta, price, student_discount, duration_min, sort_order)
     menus = [
-        ("m-cut", "カット", "シャンプー・ブロー込み", 4400, 60, 0),
-        ("m-color", "カラー", "一剤〜二剤", 6600, 120, 1),
-        ("m-perm", "パーマ", "コールド・デジタル選択可", 8800, 120, 2),
-        ("m-treat", "トリートメント", "集中補修", 3300, 30, 3),
-        ("m-straight", "縮毛矯正", "くせ毛矯正", 11000, 180, 4),
+        ("m-cut", "カット", "シャンプー・ブロー込み", 4400, 0, 60, 0),
+        ("m-color", "カラー", "一剤〜二剤", 6600, 500, 120, 1),
+        ("m-perm", "パーマ", "コールド・デジタル選択可", 8800, 500, 120, 2),
+        ("m-treat", "トリートメント", "集中補修", 3300, 0, 30, 3),
+        ("m-straight", "縮毛矯正", "くせ毛矯正", 11000, 0, 180, 4),
     ]
     cur.executemany(
-        "INSERT INTO menu_items (id, name, meta, price, duration_min, sort_order) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO menu_items (id, name, meta, price, student_discount, duration_min, sort_order) VALUES (?,?,?,?,?,?,?)",
         menus,
     )
 
@@ -201,7 +207,7 @@ def seed(conn):
     )
 
     # メニュー名 -> 所要時間(分) のマップ（座席重複チェック用）
-    duration_by_menu = {m[1]: m[4] for m in menus}
+    duration_by_menu = {m[1]: m[5] for m in menus}
 
     # 1人で対応するため、同じ日でも予約時間が重ならないように順番に並べる
     # （カラー10:00-12:00 → カット12:00-13:00 → パーマ13:00-15:00 → 縮毛矯正15:00-18:00）
