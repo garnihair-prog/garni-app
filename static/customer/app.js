@@ -139,6 +139,9 @@ async function renderSlots() {
     if (data.lastOrderTime) {
       document.getElementById("time-duration-hint").textContent += `／選択したメニューの最終受付：${data.lastOrderTime}`;
     }
+    if (data.sameDayMinTime) {
+      document.getElementById("time-duration-hint").textContent += `／本日のご予約は${data.sameDayMinTime}以降のお時間からご案内できます`;
+    }
     grid.innerHTML = data.slots.map(s => `
       <button ${s.available ? "" : "disabled"} onclick="selectTime('${s.time}')" id="slot-${s.time.replace(":", "")}">${s.time}</button>
     `).join("");
@@ -241,6 +244,64 @@ async function finishBooking() {
   }
 }
 
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function toICSUTCStamp(date) {
+  return `${date.getUTCFullYear()}${pad2(date.getUTCMonth() + 1)}${pad2(date.getUTCDate())}T${pad2(date.getUTCHours())}${pad2(date.getUTCMinutes())}${pad2(date.getUTCSeconds())}Z`;
+}
+
+function buildReservationICS(dateStr, timeStr, durationMin, menuNames) {
+  const [y, mo, d] = dateStr.split("-");
+  const [h, mi] = timeStr.split(":");
+  const startDt = `${y}${mo}${d}T${h}${mi}00`;
+  const endLabel = endTimeLabel(timeStr, durationMin || 60).replace(":", "");
+  const endDt = `${y}${mo}${d}T${endLabel}00`;
+  const uid = `${dateStr}-${timeStr.replace(":", "")}-${Math.random().toString(36).slice(2)}@garni-app`;
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//GARNI//Reservation//JP",
+    "CALSCALE:GREGORIAN",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${toICSUTCStamp(new Date())}`,
+    `DTSTART:${startDt}`,
+    `DTEND:${endDt}`,
+    `SUMMARY:GARNI ご予約（${menuNames}）`,
+    "DESCRIPTION:GARNIでのご予約です。",
+    "LOCATION:GARNI",
+    "BEGIN:VALARM",
+    "TRIGGER:-P1D",
+    "ACTION:DISPLAY",
+    "DESCRIPTION:明日はGARNIのご予約日です",
+    "END:VALARM",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ];
+  return lines.join("\r\n");
+}
+
+function downloadICS(dateStr, timeStr, durationMin, menuNames) {
+  const ics = buildReservationICS(dateStr, timeStr, durationMin, menuNames);
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "garni-reservation.ics";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadBookingICS() {
+  const names = [...selectedMenus].map(id => MENUS.find(m => m.id === id)).filter(Boolean);
+  const menuNames = names.map(m => m.name).join("・") || "ご予約";
+  downloadICS(booking.date, booking.time, totalDurationMin(), menuNames);
+}
+
 async function lookupMyPage() {
   const phone = document.getElementById("mp-phone").value.trim();
   const errBox = document.getElementById("mypage-error");
@@ -299,6 +360,7 @@ function mpHistoryItemHtml(r) {
       </div>
       <div class="error-banner" id="mp-msg-${r.id}" style="margin-top:8px;"></div>
       <button class="btn-primary" style="margin-top:8px;max-width:160px;" onclick="saveMyPageEdit('${r.id}')">保存する</button>
+      <button class="btn-ghost" style="border:1px dashed var(--brand);border-radius:10px;color:var(--brand-dark);margin-top:8px;padding:8px;" onclick="downloadICS('${r.date}', '${r.time}', ${r.duration_min || 60}, '${(r.menu_names || "").replace(/'/g, "\\'")}')">📅 カレンダーに追加</button>
     `;
   } else if (r.note) {
     editSection = `<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">ご要望：${r.note}</div>`;
