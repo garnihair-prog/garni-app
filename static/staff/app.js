@@ -278,12 +278,14 @@ async function loadMenus() {
       <td><input class="cell-input" id="m-name-${m.id}" value="${m.name}"></td>
       <td><input class="cell-input" id="m-meta-${m.id}" value="${m.meta || ""}"></td>
       <td><input class="cell-input" id="m-price-${m.id}" type="number" style="width:90px;" value="${m.price}"></td>
+      <td style="text-align:center;"><input type="checkbox" id="m-from-${m.id}" ${m.price_is_from ? "checked" : ""} style="accent-color:var(--brand);" title="目安価格（〜表示）"></td>
+      <td><input class="cell-input" id="m-discount-${m.id}" type="number" style="width:80px;" value="${m.student_discount || 0}"></td>
       <td><input class="cell-input" id="m-duration-${m.id}" type="number" style="width:70px;" value="${m.duration_min}">分</td>
       <td style="white-space:nowrap;">
         <button class="btn-ghost" style="width:auto;display:inline;padding:6px 12px;" onclick="saveMenu('${m.id}')">保存</button>
         <button class="btn-ghost" style="width:auto;display:inline;padding:6px 12px;color:var(--warning);" onclick="deleteMenu('${m.id}')">削除</button>
       </td>
-    </tr>`).join("") || `<tr><td colspan="5" style="color:var(--text-muted);">メニューがまだありません</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="7" style="color:var(--text-muted);">メニューがまだありません</td></tr>`;
 }
 async function saveMenu(id) {
   const errBox = document.getElementById("menu-error");
@@ -292,13 +294,15 @@ async function saveMenu(id) {
   const meta = document.getElementById(`m-meta-${id}`).value.trim();
   const price = parseInt(document.getElementById(`m-price-${id}`).value, 10);
   const durationMin = parseInt(document.getElementById(`m-duration-${id}`).value, 10);
+  const priceIsFrom = document.getElementById(`m-from-${id}`).checked;
+  const studentDiscount = parseInt(document.getElementById(`m-discount-${id}`).value, 10) || 0;
   if (!name || !(price >= 0) || !(durationMin > 0)) {
     errBox.textContent = "メニュー名・価格・所要時間を正しく入力してください。";
     errBox.classList.add("show");
     return;
   }
   try {
-    await api(`/api/staff/menus/${id}`, { method: "PATCH", body: JSON.stringify({ name, meta, price, durationMin }) });
+    await api(`/api/staff/menus/${id}`, { method: "PATCH", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount }) });
     loadMenus();
   } catch (e) {
     errBox.textContent = "保存に失敗しました：" + e.message;
@@ -316,17 +320,21 @@ async function addMenu() {
   const meta = document.getElementById("menu-new-meta").value.trim();
   const price = parseInt(document.getElementById("menu-new-price").value, 10);
   const durationMin = parseInt(document.getElementById("menu-new-duration").value, 10);
+  const priceIsFrom = document.getElementById("menu-new-from").checked;
+  const studentDiscount = parseInt(document.getElementById("menu-new-discount").value, 10) || 0;
   if (!name || !(price >= 0) || !(durationMin > 0)) {
     errBox.textContent = "メニュー名・価格・所要時間を正しく入力してください。";
     errBox.classList.add("show");
     return;
   }
   try {
-    await api("/api/staff/menus", { method: "POST", body: JSON.stringify({ name, meta, price, durationMin }) });
+    await api("/api/staff/menus", { method: "POST", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount }) });
     document.getElementById("menu-new-name").value = "";
     document.getElementById("menu-new-meta").value = "";
     document.getElementById("menu-new-price").value = "";
     document.getElementById("menu-new-duration").value = "";
+    document.getElementById("menu-new-discount").value = "";
+    document.getElementById("menu-new-from").checked = false;
     loadMenus();
   } catch (e) {
     errBox.textContent = "追加に失敗しました：" + e.message;
@@ -344,6 +352,50 @@ async function loadSettings() {
     <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;">
       <input type="checkbox" value="${i}" ${s.closedWeekdays.includes(i) ? "checked" : ""} style="accent-color:var(--brand);">${name}曜日
     </label>`).join("");
+  renderClosedDates(s.closedDates || []);
+}
+
+function renderClosedDates(dates) {
+  const box = document.getElementById("closed-date-list");
+  if (!dates.length) {
+    box.innerHTML = `<div style="font-size:12px;color:var(--text-muted);">登録されている臨時休業日はありません。</div>`;
+    return;
+  }
+  box.innerHTML = [...dates].sort().map(d => `
+    <div style="display:flex;align-items:center;justify-content:space-between;background:var(--brand-tint);border-radius:10px;padding:8px 12px;font-size:13px;">
+      <span>${d}</span>
+      <button onclick="removeClosedDate('${d}')" style="background:none;border:none;color:var(--critical);font-size:12px;cursor:pointer;">削除</button>
+    </div>`).join("");
+}
+
+async function addClosedDate() {
+  const msg = document.getElementById("closed-date-msg");
+  msg.classList.remove("show");
+  const date = document.getElementById("closed-date-input").value;
+  if (!date) {
+    msg.textContent = "日付を選択してください。";
+    msg.classList.add("show");
+    return;
+  }
+  try {
+    const res = await api("/api/staff/closed-dates", { method: "POST", body: JSON.stringify({ date }) });
+    document.getElementById("closed-date-input").value = "";
+    renderClosedDates(res.closedDates || []);
+  } catch (e) {
+    msg.textContent = "登録に失敗しました：" + e.message;
+    msg.classList.add("show");
+  }
+}
+
+async function removeClosedDate(date) {
+  try {
+    await api(`/api/staff/closed-dates/${date}`, { method: "DELETE" });
+    loadSettings();
+  } catch (e) {
+    const msg = document.getElementById("closed-date-msg");
+    msg.textContent = "削除に失敗しました：" + e.message;
+    msg.classList.add("show");
+  }
 }
 async function saveSettings() {
   const msg = document.getElementById("settings-msg");

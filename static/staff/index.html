@@ -126,14 +126,19 @@
             <input type="text" id="menu-new-meta" placeholder="説明（任意・例：シャンプー込み）">
             <input type="number" id="menu-new-price" placeholder="価格（円）">
             <input type="number" id="menu-new-duration" placeholder="所要時間（分）">
+            <input type="number" id="menu-new-discount" placeholder="学割引額（円・任意）">
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;">
+              <input type="checkbox" id="menu-new-from" style="accent-color:var(--brand);">目安価格（〜表示）
+            </label>
             <button onclick="addMenu()">追加する</button>
           </div>
           <div class="error-banner" id="menu-error"></div>
         </div>
         <div class="panel-card">
           <h3>メニュー一覧</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">「目安価格」にチェックすると、お客様向けの画面で価格が「¥6,600〜」のように表示されます（カラー・パーマなど、髪の長さ等で料金が変わるメニュー向け）。「学割引額」に金額を入れると、お客様向けの価格の下に「学割 -¥500」のように表示されます（0円または空欄なら非表示）。</p>
           <table class="data">
-            <thead><tr><th>メニュー名</th><th>説明</th><th>価格</th><th>所要時間</th><th></th></tr></thead>
+            <thead><tr><th>メニュー名</th><th>説明</th><th>価格</th><th>目安</th><th>学割引額</th><th>所要時間</th><th></th></tr></thead>
             <tbody id="menu-body"></tbody>
           </table>
         </div>
@@ -149,13 +154,26 @@
             <label>閉店時刻</label><input type="time" id="set-close">
           </div>
           <div class="field">
-            <label>定休日（複数選択可）</label>
+            <label>定休日（複数選択可・毎週決まった曜日が休みの場合）</label>
             <div id="set-closed-weekdays" style="display:flex;gap:14px;flex-wrap:wrap;"></div>
           </div>
         </div>
 
         <button class="btn-primary" style="max-width:240px;" onclick="saveSettings()">設定を保存</button>
         <div class="error-banner" id="settings-msg" style="margin-top:12px;"></div>
+
+        <div class="panel-card" style="margin-top:18px;">
+          <h3>臨時休業日（不定休）</h3>
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">曜日が決まっていない休みは、こちらでカレンダーから日付を指定して登録してください。登録した日はお客様の予約カレンダーで自動的に選択できなくなります。</p>
+          <div class="field-row" style="align-items:flex-end;">
+            <div class="field" style="max-width:220px;">
+              <label>休業日にする日付</label><input type="date" id="closed-date-input">
+            </div>
+            <button class="btn-primary" style="max-width:160px;" onclick="addClosedDate()">この日を休業日にする</button>
+          </div>
+          <div class="error-banner" id="closed-date-msg" style="margin-top:10px;"></div>
+          <div id="closed-date-list" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
       </div>
     </div>
   </div>
