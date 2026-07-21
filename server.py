@@ -350,7 +350,13 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
                 return self.send_json(200, {"found": False})
             resv = conn.execute(
-                "SELECT * FROM reservations WHERE customer_id=? ORDER BY date DESC, time DESC",
+                """
+                SELECT r.*, k.photo_path AS after_photo_path
+                FROM reservations r
+                LEFT JOIN karte_entries k ON k.reservation_id = r.id
+                WHERE r.customer_id=?
+                ORDER BY r.date DESC, r.time DESC
+                """,
                 (cust["id"],),
             ).fetchall()
             conn.close()
@@ -838,6 +844,43 @@ class Handler(BaseHTTPRequestHandler):
             row = conn.execute("SELECT * FROM menu_items WHERE id=?", (mid,)).fetchone()
             conn.close()
             return self.send_json(200, row_to_dict(row))
+
+        m = re.match(r"^/api/mypage/reservations/([\w-]+)$", path)
+        if m:
+            rid = m.group(1)
+            phone = re.sub(r"\D", "", (body.get("phone") or ""))
+            if not phone:
+                return self.send_json(400, {"error": "電話番号を入力してください"})
+            conn = db.get_conn()
+            resv = conn.execute("SELECT * FROM reservations WHERE id=?", (rid,)).fetchone()
+            if not resv or re.sub(r"\D", "", resv["customer_phone"]) != phone:
+                conn.close()
+                return self.send_json(404, {"error": "not found"})
+            if resv["status"] != "wait":
+                conn.close()
+                return self.send_json(400, {"error": "来店済み・キャンセル済みの予約は編集できません"})
+            note = body.get("note", resv["note"])
+            if "stylePhoto" in body and body.get("stylePhoto"):
+                new_path = save_data_url_image(body.get("stylePhoto"), "reservations", rid)
+                style_photo_path = new_path or resv["style_photo_path"]
+            else:
+                style_photo_path = resv["style_photo_path"]
+            conn.execute(
+                "UPDATE reservations SET note=?, style_photo_path=? WHERE id=?",
+                (note, style_photo_path, rid),
+            )
+            conn.commit()
+            updated = conn.execute(
+                """
+                SELECT r.*, k.photo_path AS after_photo_path
+                FROM reservations r
+                LEFT JOIN karte_entries k ON k.reservation_id = r.id
+                WHERE r.id=?
+                """,
+                (rid,),
+            ).fetchone()
+            conn.close()
+            return self.send_json(200, row_to_dict(updated))
 
         m = re.match(r"^/api/staff/reservations/([\w-]+)$", path)
         if m:
