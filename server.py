@@ -579,6 +579,8 @@ class Handler(BaseHTTPRequestHandler):
                 "closedWeekdays": sorted(closed_weekdays_set(settings)),
                 "closedDates": closed_dates,
                 "comboPermColorLastOrder": settings.get("combo_perm_color_last_order"),
+                "cancellationFeePercent": settings.get("cancellation_fee_percent", 50),
+                "cancellationFeePercentFull": settings.get("cancellation_fee_percent_full", 100),
             })
 
         # ---- staff API (auth required) ----
