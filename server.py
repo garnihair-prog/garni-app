@@ -596,8 +596,35 @@ class Handler(BaseHTTPRequestHandler):
                 "WHERE r.date=? ORDER BY r.time",
                 (date,),
             ).fetchall()
+            result = rows_to_list(rows)
+            customer_ids = sorted({r["customer_id"] for r in rows})
+            if customer_ids:
+                for cid in customer_ids:
+                    expire_stale_referral_rewards(conn, cid)
+                conn.commit()
+                placeholders = ",".join("?" * len(customer_ids))
+                active_rewards = conn.execute(
+                    f"SELECT * FROM referral_rewards WHERE referrer_customer_id IN ({placeholders}) AND status='active' "
+                    "ORDER BY expires_at ASC",
+                    customer_ids,
+                ).fetchall()
+                active_by_customer = {}
+                for rw in active_rewards:
+                    active_by_customer.setdefault(rw["referrer_customer_id"], []).append(
+                        {"id": rw["id"], "amount": rw["amount"], "expiresAt": rw["expires_at"]}
+                    )
+                resv_ids = [r["id"] for r in rows]
+                placeholders2 = ",".join("?" * len(resv_ids))
+                applied_rewards = conn.execute(
+                    f"SELECT * FROM referral_rewards WHERE used_reservation_id IN ({placeholders2})",
+                    resv_ids,
+                ).fetchall() if resv_ids else []
+                applied_by_reservation = {rw["used_reservation_id"]: row_to_dict(rw) for rw in applied_rewards}
+                for r in result:
+                    r["activeReferralRewards"] = active_by_customer.get(r["customer_id"], [])
+                    r["appliedReferralReward"] = applied_by_reservation.get(r["id"])
             conn.close()
-            return self.send_json(200, rows_to_list(rows))
+            return self.send_json(200, result)
 
         if path == "/api/staff/customers":
             if not self.require_staff():
@@ -1168,6 +1195,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             reward_id = m.group(1)
             status = body.get("status")
+            reservation_id = body.get("reservationId") or None
             if status not in ("used", "active"):
                 return self.send_json(400, {"error": "不正なステータスです"})
             conn = db.get_conn()
@@ -1176,13 +1204,26 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
                 return self.send_json(404, {"error": "not found"})
             if status == "used":
+                # 各クーポンは1回のご来店（会計）につき1枚まで：この予約に既に別のクーポンが
+                # 適用済みであれば、重ねての適用（複数枚使用）を拒否する。
+                if reward["status"] != "active":
+                    conn.close()
+                    return self.send_json(409, {"error": "このクーポンはすでに使用済み、または無効です"})
+                if reservation_id:
+                    already = conn.execute(
+                        "SELECT id FROM referral_rewards WHERE used_reservation_id=? AND status='used'",
+                        (reservation_id,),
+                    ).fetchone()
+                    if already:
+                        conn.close()
+                        return self.send_json(409, {"error": "この予約には、すでに別の紹介クーポンが適用されています（1回のご来店につき1枚までです）"})
                 conn.execute(
-                    "UPDATE referral_rewards SET status='used', used_at=? WHERE id=?",
-                    (db.now_iso(), reward_id),
+                    "UPDATE referral_rewards SET status='used', used_at=?, used_reservation_id=? WHERE id=?",
+                    (db.now_iso(), reservation_id, reward_id),
                 )
             else:
                 conn.execute(
-                    "UPDATE referral_rewards SET status='active', used_at=NULL WHERE id=?",
+                    "UPDATE referral_rewards SET status='active', used_at=NULL, used_reservation_id=NULL WHERE id=?",
                     (reward_id,),
                 )
             conn.commit()
