@@ -135,6 +135,17 @@ header.top a.switch-link { font-size: 12.5px; color: var(--brand-dark); text-dec
 .badge.upcoming { background: #eaf1fc; color: var(--series-1); }
 .badge.cancel { background: #fbeaea; color: var(--critical); }
 
+.referral-card { background: linear-gradient(135deg, var(--brand-dark), var(--brand)); color: #fff; border-radius: 14px; padding: 20px 16px; margin-bottom: 18px; text-align: center; }
+.referral-card .rf-label { font-size: 11.5px; opacity: .9; }
+.referral-card .rf-code { font-size: 28px; font-weight: 700; letter-spacing: .12em; margin: 6px 0 14px; font-variant-numeric: tabular-nums; }
+.referral-card .qr-wrap { background: #fff; border-radius: 12px; padding: 10px; display: inline-block; line-height: 0; }
+.referral-card .rf-hint { font-size: 11px; opacity: .85; margin-top: 10px; }
+.referral-card .rf-copy-btn { margin-top: 12px; width: 100%; background: rgba(255,255,255,0.18); color: #fff; border: 1px solid rgba(255,255,255,0.4); border-radius: 10px; padding: 10px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.rf-reward-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--gridline); font-size: 12.5px; }
+.rf-reward-item:last-child { border-bottom: none; }
+.rf-reward-item .rf-r-name { font-weight: 700; }
+.rf-reward-item .rf-r-date { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+
 /* staff */
 .staff-layout { display: grid; grid-template-columns: 210px 1fr; gap: 20px; }
 .side-nav { background: #fff; border: 1px solid var(--border); border-radius: var(--card-radius); padding: 12px; height: fit-content; }
