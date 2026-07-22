@@ -81,6 +81,10 @@ header.top a.switch-link { font-size: 12.5px; color: var(--brand-dark); text-dec
 .step-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--gridline); }
 .step-dots span.on { background: var(--brand); }
 
+.cal-month-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.cal-nav-btn { border: 1px solid var(--border); background: #fff; border-radius: 8px; width: 30px; height: 30px; font-size: 15px; line-height: 1; cursor: pointer; color: var(--text-primary); }
+.cal-nav-btn:disabled { color: var(--text-muted); background: var(--page-plane); cursor: default; opacity: 0.5; }
+
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-bottom: 18px; }
 .cal-grid .dow { font-size: 10.5px; text-align: center; color: var(--text-muted); font-weight: 700; }
 .cal-grid button { aspect-ratio: 1; border: 1px solid var(--border); background: #fff; border-radius: 9px; font-size: 12.5px; cursor: pointer; color: var(--text-primary); }
