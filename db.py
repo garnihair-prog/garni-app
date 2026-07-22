@@ -7,7 +7,13 @@ import os
 import uuid
 import datetime
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "garni.db")
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# GARNI_DATA_DIR を設定すると、データベースファイルの保存先を変更できる
+# （Dockerなどで永続ボリュームをマウントし、アプリ本体の更新とは切り離してデータを永続化する場合に使用）。
+# 未設定の場合は従来通りアプリと同じフォルダに保存される。
+DATA_DIR = os.environ.get("GARNI_DATA_DIR") or _BASE_DIR
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.path.join(DATA_DIR, "garni.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS stylists (
@@ -52,7 +58,7 @@ CREATE TABLE IF NOT EXISTS reservations (
     total_price INTEGER NOT NULL,
     duration_min INTEGER NOT NULL DEFAULT 60,
     note TEXT,
-    status TEXT NOT NULL DEFAULT 'wait',  -- wait / visited / cancel
+    status TEXT NOT NULL DEFAULT 'wait',  -- wait / visited / cancel / no_show
     style_photo_path TEXT,     -- お客様が予約時にアップロードした「希望スタイル」参考写真
     cancellation_fee INTEGER,  -- 土日祝キャンセル時に自動計算されるキャンセル料（円）。対象外ならNULLまたは0
     created_at TEXT NOT NULL,
@@ -85,7 +91,8 @@ CREATE TABLE IF NOT EXISTS salon_settings (
     close_time TEXT NOT NULL DEFAULT '19:00',
     closed_weekdays TEXT NOT NULL DEFAULT '1',   -- comma区切り。0=日,1=月,...,6=土
     combo_perm_color_last_order TEXT,            -- パーマ＋カラーを同時予約する場合の最終受付時間（HH:MM）
-    cancellation_fee_percent INTEGER NOT NULL DEFAULT 50,  -- 土日祝キャンセル時のキャンセル料（予約金額に対する割合%）
+    cancellation_fee_percent INTEGER NOT NULL DEFAULT 50,  -- 土日祝の前日キャンセル時のキャンセル料（予約金額に対する割合%）
+    cancellation_fee_percent_full INTEGER NOT NULL DEFAULT 100,  -- 土日祝の当日キャンセル・無断キャンセル時のキャンセル料（%）
     updated_at TEXT
 );
 
@@ -122,7 +129,7 @@ def init_db():
     has_settings = conn.execute("SELECT COUNT(*) c FROM salon_settings WHERE id=1").fetchone()["c"] > 0
     if not has_settings:
         conn.execute(
-            "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, combo_perm_color_last_order, cancellation_fee_percent, updated_at) VALUES (1, '10:00', '19:00', '1', '15:00', 50, ?)",
+            "INSERT INTO salon_settings (id, open_time, close_time, closed_weekdays, combo_perm_color_last_order, cancellation_fee_percent, cancellation_fee_percent_full, updated_at) VALUES (1, '10:00', '19:00', '1', '15:00', 50, 100, ?)",
             (now_iso(),),
         )
         conn.commit()
@@ -161,6 +168,8 @@ def init_db():
         conn.execute("UPDATE salon_settings SET combo_perm_color_last_order='15:00' WHERE id=1")
     if "cancellation_fee_percent" not in settings_cols:
         conn.execute("ALTER TABLE salon_settings ADD COLUMN cancellation_fee_percent INTEGER NOT NULL DEFAULT 50")
+    if "cancellation_fee_percent_full" not in settings_cols:
+        conn.execute("ALTER TABLE salon_settings ADD COLUMN cancellation_fee_percent_full INTEGER NOT NULL DEFAULT 100")
     # 個人店化に伴い、旧サンプルのスタイリストA/B（従業員なし）を削除する（旧バージョンからの移行）。
     # 該当スタイリストの予約は店長（s-m）に付け替え、シフトは削除する。
     old_ids = [row["id"] for row in conn.execute(
