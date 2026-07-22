@@ -59,7 +59,11 @@
         <div class="cscreen" id="c-date">
           <div class="step-dots"><span class="on"></span><span></span><span></span><span></span><span></span></div>
           <div class="section-title">来店日を選択</div>
-          <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;" id="cal-month-label"></div>
+          <div class="cal-month-nav">
+            <button type="button" class="cal-nav-btn" id="cal-prev" onclick="changeCalMonth(-1)" aria-label="前の月">‹</button>
+            <div style="font-size:12px;color:var(--text-secondary);" id="cal-month-label"></div>
+            <button type="button" class="cal-nav-btn" id="cal-next" onclick="changeCalMonth(1)" aria-label="次の月">›</button>
+          </div>
           <div class="cal-grid" id="cal-grid"></div>
         </div>
 

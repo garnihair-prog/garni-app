@@ -8,6 +8,8 @@ let booking = { date: null, dateLabel: null, stylistId: null, stylistName: null,
 let stylePhotoDataUrl = null;
 let mpReservations = [];
 let mpEditPhotos = {};
+let calMonthOffset = 0; // 0=今月、1=来月...（カレンダーの月移動用）
+const MAX_CAL_MONTHS_AHEAD = 2; // 何ヶ月先まで予約可能にするか（今月含めて3ヶ月分）
 const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
 
 // Date型から「その端末のローカル日付」のYYYY-MM-DD文字列を作る。
@@ -65,15 +67,26 @@ function toggleMenu(id) {
 
 function startBooking() {
   if (selectedMenus.size === 0 && MENUS.length) selectedMenus.add(MENUS[0].id);
+  calMonthOffset = 0;
   renderCalendar();
   showCScreen("c-date");
 }
 
+function changeCalMonth(delta) {
+  const next = calMonthOffset + delta;
+  if (next < 0 || next > MAX_CAL_MONTHS_AHEAD) return;
+  calMonthOffset = next;
+  renderCalendar();
+}
+
 function renderCalendar() {
   const today = new Date();
-  const y = today.getFullYear(), m = today.getMonth();
+  const base = new Date(today.getFullYear(), today.getMonth() + calMonthOffset, 1);
+  const y = base.getFullYear(), m = base.getMonth();
   const closedNames = (SETTINGS.closedWeekdays || []).map(w => WEEKDAY_NAMES[w] + "曜日").join("・");
   document.getElementById("cal-month-label").textContent = `${y}年${m + 1}月` + (closedNames ? `（定休日：${closedNames}）` : "");
+  document.getElementById("cal-prev").disabled = calMonthOffset <= 0;
+  document.getElementById("cal-next").disabled = calMonthOffset >= MAX_CAL_MONTHS_AHEAD;
   const first = new Date(y, m, 1);
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   let html = WEEKDAY_NAMES.map(d => `<div class="dow">${d}</div>`).join("");
