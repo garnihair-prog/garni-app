@@ -230,6 +230,7 @@ async function selectCustomer(id) {
   document.getElementById("karte-detail").innerHTML = `
     <div style="font-weight:700;font-size:15px;">${data.customer.name}</div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">${data.customer.rank} ／ 電話：${data.customer.phone} ／ ${data.customer.points}pt</div>
+    ${referralInfoHtml(data)}
     <div class="karte-history">
       ${data.history.map(h => `
         <div class="kh-item">
@@ -252,6 +253,46 @@ async function selectCustomer(id) {
         </div>`).join("") || `<div style="font-size:12px;color:var(--text-muted);">来店履歴はまだありません</div>`}
     </div>`;
   loadCustomers();
+}
+
+/* ---------------- お客様紹介（スタッフ側） ---------------- */
+function referralRewardStatusLabel(status) {
+  if (status === "used") return { text: "使用済み", cls: "done" };
+  if (status === "expired") return { text: "期限切れ", cls: "cancel" };
+  return { text: "利用可能", cls: "upcoming" };
+}
+function referralInfoHtml(data) {
+  const c = data.customer;
+  const referredLine = data.referredByName
+    ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">${data.referredByName}様のご紹介でご来店</div>`
+    : "";
+  const rewards = data.referralRewards || [];
+  const rewardRows = rewards.map(r => {
+    const st = referralRewardStatusLabel(r.status);
+    return `
+      <div class="rf-reward-row" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--gridline);font-size:12px;">
+        <div>
+          <div>${r.referred_customer_name || "―"}様のご紹介 ／ ¥${r.amount.toLocaleString()}引き</div>
+          <div style="color:var(--text-muted);font-size:11px;">発行 ${r.issued_at} ／ 期限 ${r.expires_at}${r.used_at ? ` ／ 使用日 ${r.used_at.slice(0,10)}` : ""}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="badge ${st.cls}">${st.text}</span>
+          ${r.status === "active" ? `<button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;" onclick="setReferralRewardStatus('${r.id}','used')">使用済みにする</button>` : ""}
+          ${r.status === "used" ? `<button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;" onclick="setReferralRewardStatus('${r.id}','active')">取り消す</button>` : ""}
+        </div>
+      </div>`;
+  }).join("") || `<div style="font-size:12px;color:var(--text-muted);">紹介クーポンはありません</div>`;
+  return `
+    <div style="background:var(--page-plane);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">お客様紹介</div>
+      ${referredLine}
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">このお客様の紹介コード：<strong style="color:var(--text-primary);">${c.referral_code || "―"}</strong></div>
+      ${rewardRows}
+    </div>`;
+}
+async function setReferralRewardStatus(rewardId, status) {
+  await api(`/api/staff/referral-rewards/${rewardId}`, { method: "PATCH", body: JSON.stringify({ status }) });
+  if (selectedCustomerId) selectCustomer(selectedCustomerId);
 }
 
 async function uploadKartePhoto(karteId, input) {
