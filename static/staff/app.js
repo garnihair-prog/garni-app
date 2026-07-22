@@ -184,6 +184,24 @@ function photoThumbHtml(path, alt) {
   return `<a href="${path}" target="_blank" rel="noopener"><img class="thumb" src="${path}" alt="${alt || ''}"></a>`;
 }
 
+function referralCouponCellHtml(r) {
+  if (r.appliedReferralReward) {
+    return `
+      <div style="font-size:11px;color:var(--good);font-weight:700;margin-top:4px;">
+        紹介クーポン ¥${r.appliedReferralReward.amount.toLocaleString()}引き 適用済み
+        <button class="btn-ghost" style="width:auto;display:inline;padding:0 0 0 6px;font-size:11px;color:var(--text-muted);text-decoration:underline;" onclick="undoReferralReward('${r.appliedReferralReward.id}')">取り消す</button>
+      </div>`;
+  }
+  if (r.activeReferralRewards && r.activeReferralRewards.length) {
+    const rw = r.activeReferralRewards[0];
+    const extra = r.activeReferralRewards.length > 1 ? `（他${r.activeReferralRewards.length - 1}枚保有）` : "";
+    return `
+      <div style="margin-top:4px;">
+        <button class="btn-ghost" style="width:auto;padding:4px 8px;border:1px solid var(--brand);border-radius:8px;color:var(--brand-dark);font-size:11px;" onclick="applyReferralReward('${rw.id}','${r.id}')">紹介クーポン¥${rw.amount.toLocaleString()}を適用${extra}</button>
+      </div>`;
+  }
+  return "";
+}
 async function loadReserveDate() {
   const date = document.getElementById("reserve-date").value || todayISO();
   const rows = await api(`/api/staff/reservations?date=${date}`);
@@ -195,8 +213,25 @@ async function loadReserveDate() {
       <td>
         ${statusSelectHtml(r)}
         ${(r.status === "cancel" || r.status === "no_show") && r.cancellation_fee > 0 ? `<div style="font-size:11px;color:var(--critical);font-weight:700;margin-top:4px;">キャンセル料 ¥${r.cancellation_fee.toLocaleString()}</div>` : ""}
+        ${referralCouponCellHtml(r)}
       </td>
     </tr>`).join("") || `<tr><td colspan="8" style="color:var(--text-muted);">この日の予約はありません</td></tr>`;
+}
+async function applyReferralReward(rewardId, reservationId) {
+  const msg = document.getElementById("reserve-msg");
+  try {
+    await api(`/api/staff/referral-rewards/${rewardId}`, { method: "PATCH", body: JSON.stringify({ status: "used", reservationId }) });
+    await loadReserveDate();
+  } catch (e) {
+    if (msg) {
+      msg.textContent = e.message || "クーポンの適用に失敗しました";
+      msg.classList.add("show");
+    }
+  }
+}
+async function undoReferralReward(rewardId) {
+  await api(`/api/staff/referral-rewards/${rewardId}`, { method: "PATCH", body: JSON.stringify({ status: "active" }) });
+  loadReserveDate();
 }
 async function updateStatus(id, status) {
   const updated = await api(`/api/staff/reservations/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
@@ -287,12 +322,21 @@ function referralInfoHtml(data) {
       <div style="font-size:12px;font-weight:700;margin-bottom:4px;">お客様紹介</div>
       ${referredLine}
       <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">このお客様の紹介コード：<strong style="color:var(--text-primary);">${c.referral_code || "―"}</strong></div>
+      <div class="error-banner" id="referral-msg" style="margin-bottom:8px;"></div>
       ${rewardRows}
     </div>`;
 }
 async function setReferralRewardStatus(rewardId, status) {
-  await api(`/api/staff/referral-rewards/${rewardId}`, { method: "PATCH", body: JSON.stringify({ status }) });
-  if (selectedCustomerId) selectCustomer(selectedCustomerId);
+  try {
+    await api(`/api/staff/referral-rewards/${rewardId}`, { method: "PATCH", body: JSON.stringify({ status }) });
+    if (selectedCustomerId) selectCustomer(selectedCustomerId);
+  } catch (e) {
+    const msg = document.getElementById("referral-msg");
+    if (msg) {
+      msg.textContent = e.message || "操作に失敗しました";
+      msg.classList.add("show");
+    }
+  }
 }
 
 async function uploadKartePhoto(karteId, input) {
