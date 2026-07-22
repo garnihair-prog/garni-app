@@ -58,7 +58,6 @@ SMTP_USER = os.environ.get("GARNI_SMTP_USER")
 SMTP_PASSWORD = os.environ.get("GARNI_SMTP_PASSWORD")
 NOTIFY_EMAIL = os.environ.get("GARNI_NOTIFY_EMAIL") or SMTP_USER
 
-SLOT_TIMES = ["10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00"]
 DEFAULT_OPEN_MIN = 10 * 60   # 設定が無い場合のデフォルト営業開始 10:00
 DEFAULT_CLOSE_MIN = 19 * 60  # 設定が無い場合のデフォルト営業終了 19:00
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")  # HH:MM 形式のチェック用
@@ -76,6 +75,18 @@ def time_to_min(hhmm):
 
 def min_to_time(total_min):
     return f"{total_min // 60:02d}:{total_min % 60:02d}"
+
+
+def generate_slot_times(open_min, close_min, step_min=60):
+    """営業開始〜終了時刻（分）から、1時間刻みの候補時刻（"HH:MM"）のリストを作る。
+    設定画面で営業時間を変更しても、予約可能な時間帯の選択肢に正しく反映されるように、
+    固定リストではなくその都度この関数で生成する。"""
+    times = []
+    t = open_min
+    while t <= close_min:
+        times.append(min_to_time(t))
+        t += step_min
+    return times
 
 
 def parse_shift_range(label):
@@ -491,7 +502,8 @@ class Handler(BaseHTTPRequestHandler):
             busy_ranges = [(time_to_min(r["time"]), time_to_min(r["time"]) + r["duration_min"]) for r in existing]
 
             slots = []
-            for t in SLOT_TIMES:
+            slot_times = generate_slot_times(business_range[0], business_range[1])
+            for t in slot_times:
                 start = time_to_min(t)
                 end = start + duration
                 fits_hours = start >= open_min and end <= close_min
