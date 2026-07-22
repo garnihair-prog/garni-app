@@ -255,6 +255,60 @@ def compute_cancellation_fee(status, date_str, total_price, settings):
     return round(total_price * fee_percent / 100)
 
 
+REFERRAL_REWARD_AMOUNT = 500       # ご紹介クーポンの割引額（円）
+REFERRAL_REWARD_VALID_MONTHS = 6   # ご紹介クーポンの有効期間（ヶ月）
+
+
+def add_months(d, months):
+    """date に暦月単位で months ヶ月を加算する（月末日をまたぐ場合はその月の末日に丸める）。"""
+    month_index = d.month - 1 + months
+    year = d.year + month_index // 12
+    month = month_index % 12 + 1
+    last_day = calendar.monthrange(year, month)[1]
+    day = min(d.day, last_day)
+    return datetime.date(year, month, day)
+
+
+def maybe_issue_referral_reward(conn, customer_row):
+    """予約が「来店済み」になったお客様が紹介経由の新規客であれば、紹介者に割引クーポンを発行する。
+    同じ被紹介者に対して二重に発行しないよう、既存のクーポンが無い場合のみ発行する。"""
+    if not customer_row or not customer_row["referred_by_customer_id"]:
+        return
+    already = conn.execute(
+        "SELECT id FROM referral_rewards WHERE referred_customer_id=?",
+        (customer_row["id"],),
+    ).fetchone()
+    if already:
+        return
+    issued = jst_today()
+    expires = add_months(issued, REFERRAL_REWARD_VALID_MONTHS)
+    conn.execute(
+        """INSERT INTO referral_rewards
+           (id, referrer_customer_id, referred_customer_id, referred_customer_name, amount, status, issued_at, expires_at, created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (
+            db.new_id(),
+            customer_row["referred_by_customer_id"],
+            customer_row["id"],
+            customer_row["name"],
+            REFERRAL_REWARD_AMOUNT,
+            "active",
+            issued.isoformat(),
+            expires.isoformat(),
+            db.now_iso(),
+        ),
+    )
+
+
+def expire_stale_referral_rewards(conn, customer_id):
+    """有効期限を過ぎた active なクーポンを expired に更新する（読み取り時に遅延実行）。"""
+    today_str = jst_today().isoformat()
+    conn.execute(
+        "UPDATE referral_rewards SET status='expired' WHERE referrer_customer_id=? AND status='active' AND expires_at<?",
+        (customer_id, today_str),
+    )
+
+
 def send_owner_notification_email(resv_dict, menu_names):
     """新しい予約が入ったことをオーナー様へメールで通知する。
     GARNI_SMTP_USER / GARNI_SMTP_PASSWORD が設定されていない場合は何もせずスキップする
@@ -473,6 +527,31 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return self.send_json(200, {"found": True, "customer": row_to_dict(cust), "reservations": rows_to_list(resv)})
 
+        if path == "/api/referral":
+            phone = qs.get("phone", "").strip()
+            conn = db.get_conn()
+            cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
+            if not cust:
+                conn.close()
+                return self.send_json(200, {"found": False})
+            if not cust["referral_code"]:
+                code = db.generate_referral_code(conn)
+                conn.execute("UPDATE customers SET referral_code=? WHERE id=?", (code, cust["id"]))
+                conn.commit()
+                cust = conn.execute("SELECT * FROM customers WHERE id=?", (cust["id"],)).fetchone()
+            expire_stale_referral_rewards(conn, cust["id"])
+            conn.commit()
+            rewards = conn.execute(
+                "SELECT * FROM referral_rewards WHERE referrer_customer_id=? ORDER BY issued_at DESC",
+                (cust["id"],),
+            ).fetchall()
+            conn.close()
+            return self.send_json(200, {
+                "found": True,
+                "referralCode": cust["referral_code"],
+                "rewards": rows_to_list(rewards),
+            })
+
         if path == "/api/me":
             token = self.get_cookie("garni_session")
             return self.send_json(200, {"authenticated": bool(token and token in SESSIONS)})
@@ -547,8 +626,25 @@ class Handler(BaseHTTPRequestHandler):
                 "WHERE k.customer_id=? ORDER BY k.date DESC",
                 (cid,),
             ).fetchall()
+            expire_stale_referral_rewards(conn, cid)
+            conn.commit()
+            referral_rewards = conn.execute(
+                "SELECT * FROM referral_rewards WHERE referrer_customer_id=? ORDER BY issued_at DESC",
+                (cid,),
+            ).fetchall()
+            referred_by_name = None
+            if cust["referred_by_customer_id"]:
+                referrer = conn.execute(
+                    "SELECT name FROM customers WHERE id=?", (cust["referred_by_customer_id"],)
+                ).fetchone()
+                referred_by_name = referrer["name"] if referrer else None
             conn.close()
-            return self.send_json(200, {"customer": row_to_dict(cust), "history": rows_to_list(karte)})
+            return self.send_json(200, {
+                "customer": row_to_dict(cust),
+                "history": rows_to_list(karte),
+                "referralRewards": rows_to_list(referral_rewards),
+                "referredByName": referred_by_name,
+            })
 
         if path == "/api/staff/shifts":
             if not self.require_staff():
@@ -752,6 +848,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(409, {"error": "この時間帯はすでに予約が入っています"})
 
             cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
+            referral_applied = False
             if cust:
                 customer_id = cust["id"]
                 if cust["name"] != name:
@@ -762,9 +859,18 @@ class Handler(BaseHTTPRequestHandler):
                     conn.execute("UPDATE customers SET age=? WHERE id=?", (age, customer_id))
             else:
                 customer_id = db.new_id()
+                referral_code = (body.get("referralCode") or "").strip().upper()
+                referred_by = None
+                if referral_code:
+                    referrer = conn.execute(
+                        "SELECT id FROM customers WHERE referral_code=?", (referral_code,)
+                    ).fetchone()
+                    if referrer:
+                        referred_by = referrer["id"]
+                        referral_applied = True
                 conn.execute(
-                    "INSERT INTO customers (id, name, phone, rank, points, gender, age, created_at) VALUES (?,?,?,?,?,?,?,?)",
-                    (customer_id, name, phone, "新規", 0, gender, age, db.now_iso()),
+                    "INSERT INTO customers (id, name, phone, rank, points, gender, age, referred_by_customer_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (customer_id, name, phone, "新規", 0, gender, age, referred_by, db.now_iso()),
                 )
 
             resv_id = db.new_id()
@@ -781,7 +887,9 @@ class Handler(BaseHTTPRequestHandler):
             created = conn.execute("SELECT * FROM reservations WHERE id=?", (resv_id,)).fetchone()
             conn.close()
             send_owner_notification_email(row_to_dict(created), menu_names)
-            return self.send_json(201, row_to_dict(created))
+            created_dict = row_to_dict(created)
+            created_dict["referralApplied"] = referral_applied
+            return self.send_json(201, created_dict)
 
         if path == "/api/staff/shifts":
             if not self.require_staff():
@@ -1046,8 +1154,39 @@ class Handler(BaseHTTPRequestHandler):
                     "UPDATE customers SET points = points + ? WHERE id = ?",
                     (resv["total_price"] // 100, resv["customer_id"]),
                 )
+                # お客様紹介機能：この予約の顧客が紹介経由の新規客で、初めて来店済みになった場合、紹介者に割引クーポンを発行する
+                customer_row = conn.execute("SELECT * FROM customers WHERE id=?", (resv["customer_id"],)).fetchone()
+                maybe_issue_referral_reward(conn, customer_row)
             conn.commit()
             updated = conn.execute("SELECT * FROM reservations WHERE id=?", (rid,)).fetchone()
+            conn.close()
+            return self.send_json(200, row_to_dict(updated))
+
+        m = re.match(r"^/api/staff/referral-rewards/([\w-]+)$", path)
+        if m:
+            if not self.require_staff():
+                return
+            reward_id = m.group(1)
+            status = body.get("status")
+            if status not in ("used", "active"):
+                return self.send_json(400, {"error": "不正なステータスです"})
+            conn = db.get_conn()
+            reward = conn.execute("SELECT * FROM referral_rewards WHERE id=?", (reward_id,)).fetchone()
+            if not reward:
+                conn.close()
+                return self.send_json(404, {"error": "not found"})
+            if status == "used":
+                conn.execute(
+                    "UPDATE referral_rewards SET status='used', used_at=? WHERE id=?",
+                    (db.now_iso(), reward_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE referral_rewards SET status='active', used_at=NULL WHERE id=?",
+                    (reward_id,),
+                )
+            conn.commit()
+            updated = conn.execute("SELECT * FROM referral_rewards WHERE id=?", (reward_id,)).fetchone()
             conn.close()
             return self.send_json(200, row_to_dict(updated))
 

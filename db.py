@@ -6,6 +6,7 @@ import sqlite3
 import os
 import uuid
 import datetime
+import random
 
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # GARNI_DATA_DIR を設定すると、データベースファイルの保存先を変更できる
@@ -43,6 +44,8 @@ CREATE TABLE IF NOT EXISTS customers (
     points INTEGER NOT NULL DEFAULT 0,
     gender TEXT,        -- '男性' / '女性' / NULL（未回答）
     age INTEGER,         -- 予約時にお客様が任意入力
+    referral_code TEXT UNIQUE,          -- お客様紹介機能：このお客様自身の紹介コード
+    referred_by_customer_id TEXT,       -- お客様紹介機能：このお客様を紹介してくれた既存客のcustomer_id（新規客のみ設定）
     created_at TEXT NOT NULL
 );
 
@@ -100,6 +103,22 @@ CREATE TABLE IF NOT EXISTS closed_dates (
     date TEXT PRIMARY KEY,     -- YYYY-MM-DD。不定休など、特定の日だけを臨時休業日にする
     created_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS referral_rewards (
+    id TEXT PRIMARY KEY,
+    referrer_customer_id TEXT NOT NULL,   -- クーポンを受け取る側（紹介した既存客）
+    referred_customer_id TEXT NOT NULL,   -- 紹介された新規客
+    referred_customer_name TEXT,          -- 表示用（紹介された方のお名前のスナップショット）
+    amount INTEGER NOT NULL DEFAULT 500,  -- 割引額（円）
+    status TEXT NOT NULL DEFAULT 'active',  -- active（未使用）/ used（使用済み）/ expired（期限切れ）
+    issued_at TEXT NOT NULL,   -- 付与日（紹介された方が来店済みになった日）
+    expires_at TEXT NOT NULL,  -- 有効期限（付与日から6ヶ月後）
+    used_at TEXT,
+    used_reservation_id TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (referrer_customer_id) REFERENCES customers(id),
+    FOREIGN KEY (referred_customer_id) REFERENCES customers(id)
+);
 """
 
 
@@ -116,6 +135,21 @@ def now_iso():
 
 def new_id():
     return uuid.uuid4().hex[:12]
+
+
+# 紹介コードに使う文字（0/O、1/I など見間違えやすい文字を除いた大文字英数字）
+_REFERRAL_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def generate_referral_code(conn):
+    """他の誰とも重複しない6桁の紹介コードを発行する。"""
+    for _ in range(20):
+        code = "".join(random.choice(_REFERRAL_CODE_ALPHABET) for _ in range(6))
+        exists = conn.execute("SELECT 1 FROM customers WHERE referral_code=?", (code,)).fetchone()
+        if not exists:
+            return code
+    # 極めて低確率だが、20回試しても衝突する場合はIDベースでユニーク性を保証する
+    return (new_id() + "000000")[:6].upper()
 
 
 def init_db():
@@ -139,6 +173,17 @@ def init_db():
         conn.execute("ALTER TABLE customers ADD COLUMN gender TEXT")
     if "age" not in cust_cols:
         conn.execute("ALTER TABLE customers ADD COLUMN age INTEGER")
+    if "referral_code" not in cust_cols:
+        conn.execute("ALTER TABLE customers ADD COLUMN referral_code TEXT")
+    if "referred_by_customer_id" not in cust_cols:
+        conn.execute("ALTER TABLE customers ADD COLUMN referred_by_customer_id TEXT")
+    # 紹介コードが未発行の既存顧客（お客様紹介機能の追加前から登録されている顧客）に発行する
+    no_code_rows = conn.execute("SELECT id FROM customers WHERE referral_code IS NULL").fetchall()
+    for row in no_code_rows:
+        conn.execute(
+            "UPDATE customers SET referral_code=? WHERE id=?",
+            (generate_referral_code(conn), row["id"]),
+        )
     # 既存DBに reservations.style_photo_path / karte_entries.photo_path 列が無ければ追加する
     resv_cols = {row["name"] for row in conn.execute("PRAGMA table_info(reservations)").fetchall()}
     if "style_photo_path" not in resv_cols:
