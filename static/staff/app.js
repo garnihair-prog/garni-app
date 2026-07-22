@@ -1,6 +1,25 @@
-/* GARNI アプリ - スタッフ管理画面フロントエンド（実APIと通信） */
+/* GARNI アプリ - お客様向けフロントエンド（実APIと通信） */
 
-let currentWeekStart = null; // ISO date string (Monday)
+let MENUS = [];
+let STYLISTS = [];
+let SETTINGS = { closedWeekdays: [] };
+let selectedMenus = new Set();
+let booking = { date: null, dateLabel: null, stylistId: null, stylistName: null, time: null };
+let stylePhotoDataUrl = null;
+let mpReservations = [];
+let mpEditPhotos = {};
+const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
+
+// Date型から「その端末のローカル日付」のYYYY-MM-DD文字列を作る。
+// d.toISOString() はUTCに変換してしまうため、日本(UTC+9)では日付が1日ずれることがあり
+// （例: 7/30 0:00 JST → toISOString()は"2026-07-29..."になる）、休業日判定や予約日がずれる
+// 原因になっていた。カレンダー表示・選択には必ずこちらを使う。
+function toLocalDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
 
 async function api(path, options) {
   const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, options || {}));
@@ -14,525 +33,425 @@ async function api(path, options) {
   return data;
 }
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-function mondayOf(dateStr) {
-  const d = new Date(dateStr + "T00:00:00");
-  const day = d.getDay(); // 0=Sun
-  const diff = (day === 0 ? -6 : 1 - day);
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().slice(0, 10);
-}
-function addDays(dateStr, n) {
-  const d = new Date(dateStr + "T00:00:00");
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
-function timeRangeLabel(startTime, durationMin) {
-  const [h, m] = startTime.split(":").map(Number);
-  const total = h * 60 + m + (durationMin || 60);
-  const end = `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
-  return `${startTime}〜${end}`;
+function showCScreen(id) {
+  document.querySelectorAll(".cscreen").forEach(el => el.classList.toggle("active", el.id === id));
+  document.querySelectorAll(".phone-tabbar button").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
+  document.querySelector(".phone-screen").scrollTop = 0;
 }
 
-function statusPillHtml(status) {
-  const map = { wait: ["wait", "未対応"], visited: ["visited", "来店済み"], cancel: ["cancel", "キャンセル"] };
-  const [cls, label] = map[status];
-  return `<span class="status-pill ${cls}">${label}</span>`;
-}
-function statusSelectHtml(r) {
-  return `<select class="status-select" onchange="updateStatus('${r.id}', this.value)">
-    <option value="wait" ${r.status === "wait" ? "selected" : ""}>未対応</option>
-    <option value="visited" ${r.status === "visited" ? "selected" : ""}>来店済み</option>
-    <option value="cancel" ${r.status === "cancel" ? "selected" : ""}>キャンセル</option>
-  </select>`;
+function menuCardHtml(m, withCheckbox) {
+  const checked = selectedMenus.has(m.id) ? "checked" : "";
+  return `
+    <div class="menu-card">
+      <div class="menu-row">
+        ${withCheckbox ? `<input type="checkbox" ${checked} onchange="toggleMenu('${m.id}')">` : ""}
+        <div><div class="mname">${m.name}</div>${m.meta ? `<div class="mmeta">${m.meta}</div>` : ""}</div>
+      </div>
+      <div class="price-col">
+        <div class="mprice">¥${m.price.toLocaleString()}${m.price_is_from ? "〜" : ""}</div>
+        ${m.student_discount > 0 ? `<div class="mdiscount">学割 -¥${m.student_discount.toLocaleString()}</div>` : ""}
+      </div>
+    </div>`;
 }
 
-/* ---------------- AUTH ---------------- */
-async function checkAuth() {
-  const { authenticated } = await api("/api/me");
-  document.getElementById("login-view").style.display = authenticated ? "none" : "block";
-  document.getElementById("staff-view").style.display = authenticated ? "grid" : "none";
-  if (authenticated) loadAllInit();
-  return authenticated;
+function renderMenuList() {
+  document.getElementById("menu-list").innerHTML = MENUS.map(m => menuCardHtml(m, true)).join("");
+  document.getElementById("home-menu-list").innerHTML = MENUS.slice(0, 3).map(m => menuCardHtml(m, false)).join("");
 }
-async function doLogin() {
-  const password = document.getElementById("login-password").value;
-  const errBox = document.getElementById("login-error");
+function toggleMenu(id) {
+  if (selectedMenus.has(id)) selectedMenus.delete(id); else selectedMenus.add(id);
+  renderMenuList();
+}
+
+function startBooking() {
+  if (selectedMenus.size === 0 && MENUS.length) selectedMenus.add(MENUS[0].id);
+  renderCalendar();
+  showCScreen("c-date");
+}
+
+function renderCalendar() {
+  const today = new Date();
+  const y = today.getFullYear(), m = today.getMonth();
+  const closedNames = (SETTINGS.closedWeekdays || []).map(w => WEEKDAY_NAMES[w] + "曜日").join("・");
+  document.getElementById("cal-month-label").textContent = `${y}年${m + 1}月` + (closedNames ? `（定休日：${closedNames}）` : "");
+  const first = new Date(y, m, 1);
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  let html = WEEKDAY_NAMES.map(d => `<div class="dow">${d}</div>`).join("");
+  for (let i = 0; i < first.getDay(); i++) html += `<button disabled></button>`;
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(y, m, day);
+    const isPast = d < new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const iso = toLocalDateStr(d);
+    const isClosedWeekday = (SETTINGS.closedWeekdays || []).includes(d.getDay());
+    const isClosedDate = (SETTINGS.closedDates || []).includes(iso);
+    const isClosed = isClosedWeekday || isClosedDate;
+    const disabled = isPast || isClosed;
+    html += `<button ${disabled ? "disabled" : ""} onclick="selectDate('${iso}', ${day})" id="cal-${day}" title="${isClosed ? "休業日" : ""}">${day}</button>`;
+  }
+  document.getElementById("cal-grid").innerHTML = html;
+}
+
+function selectDate(iso, day) {
+  booking.date = iso;
+  booking.dateLabel = iso.replace(/-/g, "/");
+  document.querySelectorAll("#cal-grid button").forEach(b => b.classList.remove("sel"));
+  document.getElementById("cal-" + day).classList.add("sel");
+  renderStylists();
+  showCScreen("c-stylist");
+}
+
+function renderStylists() {
+  document.getElementById("stylist-row").innerHTML = STYLISTS.map(s => `
+    <div class="stylist-chip" id="sty-${s.id}" onclick="selectStylist('${s.id}', '${s.name}')">
+      <div class="av">${s.name[0]}</div>
+      <div class="nm">${s.name}</div>
+      <div class="rl">${s.role}</div>
+    </div>`).join("");
+}
+
+async function selectStylist(id, name) {
+  booking.stylistId = id;
+  booking.stylistName = name;
+  document.querySelectorAll(".stylist-chip").forEach(c => c.classList.remove("sel"));
+  document.getElementById("sty-" + id).classList.add("sel");
+  await renderSlots();
+  showCScreen("c-time");
+}
+
+function totalDurationMin() {
+  return [...selectedMenus].reduce((sum, id) => {
+    const m = MENUS.find(x => x.id === id);
+    return sum + (m ? m.duration_min : 0);
+  }, 0);
+}
+
+async function renderSlots() {
+  const errBox = document.getElementById("time-error");
   errBox.classList.remove("show");
+  const grid = document.getElementById("slot-grid");
+  grid.innerHTML = `<div style="font-size:12px;color:var(--text-muted);">読み込み中...</div>`;
+  const duration = totalDurationMin();
+  const menuIds = [...selectedMenus].join(",");
+  document.getElementById("time-duration-hint").textContent = `合計所要時間：約${duration}分`;
   try {
-    await api("/api/login", { method: "POST", body: JSON.stringify({ password }) });
-    await checkAuth();
+    const data = await api(`/api/availability?date=${booking.date}&stylistId=${booking.stylistId}&durationMin=${duration}&menuIds=${encodeURIComponent(menuIds)}`);
+    if (data.reason === "closed_weekday" || data.reason === "closed_date") {
+      grid.innerHTML = "";
+      errBox.textContent = "この日は休業日です。別の日を選んでください。";
+      errBox.classList.add("show");
+      return;
+    }
+    if (data.reason === "shift_off" || data.slots.length === 0) {
+      grid.innerHTML = "";
+      errBox.textContent = "この日は担当スタイリストが休みです。別の日を選んでください。";
+      errBox.classList.add("show");
+      return;
+    }
+    if (data.lastOrderTime) {
+      document.getElementById("time-duration-hint").textContent += `／選択したメニューの最終受付：${data.lastOrderTime}`;
+    }
+    if (data.sameDayMinTime) {
+      document.getElementById("time-duration-hint").textContent += `／本日のご予約は${data.sameDayMinTime}以降のお時間からご案内できます`;
+    }
+    grid.innerHTML = data.slots.map(s => `
+      <button ${s.available ? "" : "disabled"} onclick="selectTime('${s.time}')" id="slot-${s.time.replace(":", "")}">${s.time}</button>
+    `).join("");
   } catch (e) {
-    errBox.textContent = "パスワードが違います。";
+    errBox.textContent = "空き状況の取得に失敗しました。もう一度お試しください。";
     errBox.classList.add("show");
   }
 }
-async function doLogout() {
-  await api("/api/logout", { method: "POST" });
-  location.reload();
+
+function selectTime(t) {
+  booking.time = t;
+  document.querySelectorAll("#slot-grid button").forEach(b => b.classList.remove("sel"));
+  document.getElementById("slot-" + t.replace(":", "")).classList.add("sel");
+  showCScreen("c-info");
 }
 
-/* ---------------- NAV ---------------- */
-function showSPanel(id) {
-  document.querySelectorAll(".staff-panel").forEach(el => el.classList.toggle("active", el.id === id));
-  document.querySelectorAll(".side-nav button[data-panel]").forEach(b => b.classList.toggle("active", b.dataset.panel === id));
-  if (id === "s-dashboard") loadDashboard();
-  if (id === "s-reserve") loadReserveDate();
-  if (id === "s-karte") loadCustomers();
-  if (id === "s-shift") loadShift();
-  if (id === "s-menu") loadMenus();
-  if (id === "s-settings") loadSettings();
+function goConfirm() {
+  const name = document.getElementById("in-name").value.trim();
+  const phone = document.getElementById("in-phone").value.trim();
+  const errBox = document.getElementById("stylist-error");
+  if (!name || !phone) {
+    errBox.textContent = "お名前と電話番号を入力してください。";
+    errBox.classList.add("show");
+    return;
+  }
+  errBox.classList.remove("show");
+  renderConfirm();
+  showCScreen("c-confirm");
 }
 
-function loadAllInit() {
-  document.getElementById("reserve-date").value = todayISO();
-  currentWeekStart = mondayOf(todayISO());
-  loadDashboard();
+function endTimeLabel(startTime, durationMin) {
+  const [h, m] = startTime.split(":").map(Number);
+  const total = h * 60 + m + durationMin;
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
-/* ---------------- DASHBOARD ---------------- */
-async function loadDashboard() {
-  const data = await api(`/api/staff/dashboard?date=${todayISO()}`);
-  document.getElementById("dash-stats").innerHTML = `
-    <div class="stat-tile"><div class="label">本日の予約件数</div><div class="value">${data.todayCount}件</div></div>
-    <div class="stat-tile"><div class="label">本日の売上（実績）</div><div class="value">¥${data.todaySales.toLocaleString()}</div></div>
-    <div class="stat-tile"><div class="label">今月の新規顧客</div><div class="value">${data.newCustomersThisMonth}人</div></div>
-    <div class="stat-tile"><div class="label">本日の予約数（対応待ち）</div><div class="value">${data.todayReservations.filter(r => r.status === "wait").length}件</div></div>
+function renderConfirm() {
+  const names = [...selectedMenus].map(id => MENUS.find(m => m.id === id));
+  const total = names.reduce((a, m) => a + m.price, 0);
+  const hasFromPrice = names.some(m => m.price_is_from);
+  const totalStudentDiscount = names.reduce((a, m) => a + (m.student_discount || 0), 0);
+  const duration = totalDurationMin();
+  document.getElementById("confirm-summary").innerHTML = `
+    <div class="row"><span>来店日時</span><span>${booking.dateLabel} ${booking.time}〜${endTimeLabel(booking.time, duration)}</span></div>
+    <div class="row"><span>メニュー</span><span>${names.map(m => m.name).join("・")}</span></div>
+    <div class="row"><span>担当</span><span>${booking.stylistName}</span></div>
+    <div class="row total"><span>合計</span><span>¥${total.toLocaleString()}${hasFromPrice ? "〜" : ""}</span></div>
+    ${hasFromPrice ? `<div class="row"><span></span><span style="font-size:11px;color:var(--text-muted);">※目安料金を含みます。実際の料金は状態により変動します</span></div>` : ""}
+    ${totalStudentDiscount > 0 ? `<div class="row"><span></span><span style="font-size:11px;color:var(--brand-dark);">学生証のご提示で ¥${totalStudentDiscount.toLocaleString()} 引きになります（当日お会計時に適用）</span></div>` : ""}
+    ${stylePhotoDataUrl ? `<div class="row"><span>希望スタイル写真</span><span><img src="${stylePhotoDataUrl}" style="width:60px;height:60px;object-fit:cover;border-radius:8px;"></span></div>` : ""}
   `;
-  document.getElementById("dash-reserve-body").innerHTML = data.todayReservations.map(r => `
-    <tr><td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}</td><td>${r.menu_names}</td><td>${r.stylist_name}</td><td>${statusPillHtml(r.status)}</td></tr>
-  `).join("") || `<tr><td colspan="5" style="color:var(--text-muted);">本日の予約はまだありません</td></tr>`;
-  drawSalesChart(data.weeklySales);
-  loadCustomerStats();
 }
 
-function barListHtml(items, unit) {
-  if (!items.length) return `<div class="bl-empty">データがまだありません</div>`;
-  return items.map(it => `
-    <div class="bl-row">
-      <div class="bl-top"><span class="bl-name">${it.name || it.label}</span><span class="bl-val">${it.count}${unit || "人"}（${it.percentage}%）</span></div>
-      <div class="bl-track"><div class="bl-fill" style="width:${Math.min(it.percentage, 100)}%;"></div></div>
-    </div>`).join("");
-}
-
-async function loadCustomerStats() {
-  const data = await api("/api/staff/customer-stats");
-  document.getElementById("stat-categories").innerHTML = barListHtml(data.categories);
-  document.getElementById("stat-gender").innerHTML = barListHtml(data.gender);
-  document.getElementById("stat-age").innerHTML = barListHtml(data.age);
-}
-
-function drawSalesChart(weeklySales) {
-  const svg = document.getElementById("sales-chart");
-  const w = svg.clientWidth || 560, h = 220;
-  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-  const padL = 50, padB = 26, padT = 12, padR = 10;
-  const chartW = w - padL - padR, chartH = h - padT - padB;
-  const maxVal = Math.max(1, ...weeklySales.map(d => d.value)) * 1.15;
-  const n = weeklySales.length, gap = 14;
-  const barW = (chartW - gap * (n - 1)) / n;
-
-  let gridlines = "";
-  const steps = 4;
-  for (let i = 0; i <= steps; i++) {
-    const y = padT + chartH - (chartH / steps) * i;
-    const val = Math.round((maxVal / steps) * i);
-    gridlines += `<line x1="${padL}" x2="${w - padR}" y1="${y}" y2="${y}" stroke="#e1e0d9" stroke-width="1"/>`;
-    gridlines += `<text x="${padL - 8}" y="${y + 4}" font-size="10" fill="#898781" text-anchor="end">${val >= 1000 ? Math.round(val / 1000) + "k" : val}</text>`;
+async function onStylePhotoSelected(input) {
+  const preview = document.getElementById("style-photo-preview");
+  if (!input.files || !input.files[0]) {
+    stylePhotoDataUrl = null;
+    preview.innerHTML = "";
+    return;
   }
-  let bars = "";
-  weeklySales.forEach((d, i) => {
-    const bh = (d.value / maxVal) * chartH;
-    const x = padL + i * (barW + gap);
-    const y = padT + chartH - bh;
-    bars += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(bh,0)}" rx="4" ry="4" fill="#2a78d6" class="sales-bar" data-idx="${i}" style="cursor:pointer;"/>`;
-    bars += `<text x="${x + barW / 2}" y="${h - 8}" font-size="10" fill="#898781" text-anchor="middle">${d.date.slice(5).replace("-", "/")}</text>`;
-  });
-  svg.innerHTML = `<line x1="${padL}" x2="${w - padR}" y1="${padT + chartH}" y2="${padT + chartH}" stroke="#c3c2b7" stroke-width="1"/>` + gridlines + bars;
+  try {
+    stylePhotoDataUrl = await resizeImageFileToDataUrl(input.files[0]);
+    preview.innerHTML = `<img src="${stylePhotoDataUrl}" style="width:100px;height:100px;object-fit:cover;border-radius:10px;border:1px solid var(--border);">`;
+  } catch (e) {
+    stylePhotoDataUrl = null;
+    preview.innerHTML = `<div style="font-size:11.5px;color:var(--warning);">写真の読み込みに失敗しました。もう一度お試しください。</div>`;
+  }
+}
 
-  const tip = document.getElementById("bar-tip");
-  svg.querySelectorAll(".sales-bar").forEach(bar => {
-    bar.addEventListener("mousemove", (e) => {
-      const idx = +bar.dataset.idx;
-      const d = weeklySales[idx];
-      const rect = svg.getBoundingClientRect();
-      tip.style.left = (e.clientX - rect.left) + "px";
-      tip.style.top = (e.clientY - rect.top) + "px";
-      tip.textContent = `${d.date}: ¥${d.value.toLocaleString()}`;
-      tip.style.opacity = 1;
+async function finishBooking() {
+  const btn = document.getElementById("btn-confirm");
+  const errBox = document.getElementById("confirm-error");
+  errBox.classList.remove("show");
+  btn.disabled = true;
+  try {
+    await api("/api/reservations", {
+      method: "POST",
+      body: JSON.stringify({
+        date: booking.date,
+        time: booking.time,
+        stylistId: booking.stylistId,
+        menuIds: [...selectedMenus],
+        customerName: document.getElementById("in-name").value.trim(),
+        customerPhone: document.getElementById("in-phone").value.trim(),
+        customerGender: document.getElementById("in-gender").value || null,
+        customerAge: document.getElementById("in-age").value ? parseInt(document.getElementById("in-age").value, 10) : null,
+        note: document.getElementById("in-note").value.trim(),
+        stylePhoto: stylePhotoDataUrl,
+      }),
     });
-    bar.addEventListener("mouseleave", () => { tip.style.opacity = 0; });
-  });
-}
-
-/* ---------------- RESERVE MANAGEMENT ---------------- */
-function photoThumbHtml(path, alt) {
-  if (!path) return `<span style="font-size:11px;color:var(--text-muted);">―</span>`;
-  return `<a href="${path}" target="_blank" rel="noopener"><img class="thumb" src="${path}" alt="${alt || ''}"></a>`;
-}
-
-async function loadReserveDate() {
-  const date = document.getElementById("reserve-date").value || todayISO();
-  const rows = await api(`/api/staff/reservations?date=${date}`);
-  document.getElementById("reserve-body").innerHTML = rows.map(r => `
-    <tr>
-      <td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}</td><td>${r.customer_phone}</td><td>${r.menu_names}</td>
-      <td>${r.stylist_name}</td><td class="amt">¥${r.total_price.toLocaleString()}</td>
-      <td>${photoThumbHtml(r.style_photo_path, "希望スタイル")}</td>
-      <td>
-        ${statusSelectHtml(r)}
-        ${r.status === "cancel" && r.cancellation_fee > 0 ? `<div style="font-size:11px;color:var(--critical);font-weight:700;margin-top:4px;">キャンセル料 ¥${r.cancellation_fee.toLocaleString()}</div>` : ""}
-      </td>
-    </tr>`).join("") || `<tr><td colspan="8" style="color:var(--text-muted);">この日の予約はありません</td></tr>`;
-}
-async function updateStatus(id, status) {
-  const updated = await api(`/api/staff/reservations/${id}`, { method: "PATCH", body: JSON.stringify({ status }) });
-  loadReserveDate();
-  loadDashboard();
-  const msg = document.getElementById("reserve-msg");
-  if (status === "cancel" && updated.cancellation_fee > 0) {
-    msg.textContent = `土日祝のご予約のキャンセルのため、キャンセル料 ¥${updated.cancellation_fee.toLocaleString()} が発生します。お会計時にご案内ください。`;
-    msg.classList.add("show");
-  } else if (msg) {
-    msg.classList.remove("show");
+    stylePhotoDataUrl = null;
+    document.getElementById("style-photo-preview").innerHTML = "";
+    document.getElementById("in-style-photo").value = "";
+    showCScreen("c-success");
+  } catch (e) {
+    errBox.textContent = e.message + "（別の時間帯を選び直してください）";
+    errBox.classList.add("show");
+  } finally {
+    btn.disabled = false;
   }
 }
 
-/* ---------------- KARTE ---------------- */
-let selectedCustomerId = null;
-async function loadCustomers() {
-  const rows = await api("/api/staff/customers");
-  document.getElementById("cust-list").innerHTML = rows.map(c => `
-    <div class="cust-row ${c.id === selectedCustomerId ? "sel" : ""}" onclick="selectCustomer('${c.id}')">
-      <div><div class="nm">${c.name}</div><div class="lv">${c.rank}</div></div>
-      <div class="lv">最終来店 ${c.last_visit || "―"}</div>
-    </div>`).join("");
-  if (!selectedCustomerId && rows.length) selectCustomer(rows[0].id);
+function pad2(n) {
+  return String(n).padStart(2, "0");
 }
-async function selectCustomer(id) {
-  selectedCustomerId = id;
-  document.querySelectorAll(".cust-row").forEach(r => r.classList.remove("sel"));
-  const data = await api(`/api/staff/customers/${id}`);
-  document.getElementById("karte-detail").innerHTML = `
-    <div style="font-weight:700;font-size:15px;">${data.customer.name}</div>
-    <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">${data.customer.rank} ／ 電話：${data.customer.phone} ／ ${data.customer.points}pt</div>
-    <div class="karte-history">
-      ${data.history.map(h => `
-        <div class="kh-item">
-          <div class="kh-date">${h.date}</div>
-          <div class="kh-menu">${h.menu_names}</div>
-          <div class="kh-memo">${h.memo || "（メモなし）"}</div>
-          <div class="photo-pair">
-            <div class="ph-col">
-              <div class="ph-label">お客様の希望スタイル</div>
-              ${h.style_photo_path ? `<a href="${h.style_photo_path}" target="_blank" rel="noopener"><img class="thumb-lg" src="${h.style_photo_path}"></a>` : `<span style="font-size:11px;color:var(--text-muted);">写真なし</span>`}
-            </div>
-            <div class="ph-col">
-              <div class="ph-label">施術後</div>
-              ${h.photo_path ? `<a href="${h.photo_path}" target="_blank" rel="noopener"><img class="thumb-lg" src="${h.photo_path}"></a>` : `
-                <label class="photo-upload-btn">＋ 施術後の写真を追加
-                  <input type="file" accept="image/*" capture="environment" onchange="uploadKartePhoto('${h.id}', this)">
-                </label>`}
-            </div>
-          </div>
-        </div>`).join("") || `<div style="font-size:12px;color:var(--text-muted);">来店履歴はまだありません</div>`}
+
+function toICSUTCStamp(date) {
+  return `${date.getUTCFullYear()}${pad2(date.getUTCMonth() + 1)}${pad2(date.getUTCDate())}T${pad2(date.getUTCHours())}${pad2(date.getUTCMinutes())}${pad2(date.getUTCSeconds())}Z`;
+}
+
+function buildReservationICS(dateStr, timeStr, durationMin, menuNames) {
+  const [y, mo, d] = dateStr.split("-");
+  const [h, mi] = timeStr.split(":");
+  const startDt = `${y}${mo}${d}T${h}${mi}00`;
+  const endLabel = endTimeLabel(timeStr, durationMin || 60).replace(":", "");
+  const endDt = `${y}${mo}${d}T${endLabel}00`;
+  const uid = `${dateStr}-${timeStr.replace(":", "")}-${Math.random().toString(36).slice(2)}@garni-app`;
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//GARNI//Reservation//JP",
+    "CALSCALE:GREGORIAN",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${toICSUTCStamp(new Date())}`,
+    `DTSTART:${startDt}`,
+    `DTEND:${endDt}`,
+    `SUMMARY:GARNI ご予約（${menuNames}）`,
+    "DESCRIPTION:GARNIでのご予約です。",
+    "LOCATION:GARNI",
+    "BEGIN:VALARM",
+    "TRIGGER:-P1D",
+    "ACTION:DISPLAY",
+    "DESCRIPTION:明日はGARNIのご予約日です",
+    "END:VALARM",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ];
+  return lines.join("\r\n");
+}
+
+function downloadICS(dateStr, timeStr, durationMin, menuNames) {
+  const ics = buildReservationICS(dateStr, timeStr, durationMin, menuNames);
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "garni-reservation.ics";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadBookingICS() {
+  const names = [...selectedMenus].map(id => MENUS.find(m => m.id === id)).filter(Boolean);
+  const menuNames = names.map(m => m.name).join("・") || "ご予約";
+  downloadICS(booking.date, booking.time, totalDurationMin(), menuNames);
+}
+
+async function lookupMyPage() {
+  const phone = document.getElementById("mp-phone").value.trim();
+  const errBox = document.getElementById("mypage-error");
+  errBox.classList.remove("show");
+  if (!phone) { errBox.textContent = "電話番号を入力してください。"; errBox.classList.add("show"); return; }
+  try {
+    const data = await api(`/api/mypage?phone=${encodeURIComponent(phone)}`);
+    if (!data.found) {
+      errBox.textContent = "ご予約情報が見つかりませんでした。予約時と同じ電話番号でお試しください。";
+      errBox.classList.add("show");
+      return;
+    }
+    document.getElementById("mypage-lookup").style.display = "none";
+    document.getElementById("mypage-result").style.display = "block";
+    document.getElementById("mp-rank").textContent = "会員ランク：" + data.customer.rank;
+    document.getElementById("mp-pts").textContent = data.customer.points.toLocaleString() + " pt";
+    mpEditPhotos = {};
+    mpReservations = data.reservations;
+    renderMpHistory();
+  } catch (e) {
+    errBox.textContent = "取得に失敗しました。もう一度お試しください。";
+    errBox.classList.add("show");
+  }
+}
+
+function mpPhotoHtml(path, label, placeholder) {
+  return `<div class="ph-col">
+    <div class="ph-label">${label}</div>
+    ${path
+      ? `<a href="${path}" target="_blank"><img class="thumb-lg" src="${path}"></a>`
+      : `<div style="font-size:11px;color:var(--text-muted);">${placeholder}</div>`}
+  </div>`;
+}
+
+function mpHistoryItemHtml(r) {
+  const badge = r.status === "visited" ? '<span class="badge done">来店済み</span>'
+              : r.status === "cancel" ? '<span class="badge cancel">キャンセル</span>'
+              : r.status === "no_show" ? '<span class="badge cancel">無断キャンセル</span>'
+              : '<span class="badge upcoming">予約済</span>';
+  const isWait = r.status === "wait";
+  const staged = mpEditPhotos[r.id];
+  const stylePhotoForDisplay = staged || r.style_photo_path;
+  let editSection = "";
+  if (isWait) {
+    const noteVal = (r.note || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    editSection = `
+      <div class="field" style="margin-top:10px;">
+        <label>ご要望・リクエスト</label>
+        <textarea id="mp-note-${r.id}" placeholder="例：前回より短めにしたいです">${noteVal}</textarea>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <label class="photo-upload-btn">
+          ＋ 希望スタイル写真を選ぶ
+          <input type="file" accept="image/*" onchange="onMpPhotoSelected('${r.id}', this)">
+        </label>
+        <div id="mp-photo-preview-${r.id}">${staged ? `<img src="${staged}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;">` : ""}</div>
+      </div>
+      <div class="error-banner" id="mp-msg-${r.id}" style="margin-top:8px;"></div>
+      <button class="btn-primary" style="margin-top:8px;max-width:160px;" onclick="saveMyPageEdit('${r.id}')">保存する</button>
+      <button class="btn-ghost" style="border:1px dashed var(--brand);border-radius:10px;color:var(--brand-dark);margin-top:8px;padding:8px;" onclick="downloadICS('${r.date}', '${r.time}', ${r.duration_min || 60}, '${(r.menu_names || "").replace(/'/g, "\\'")}')">📅 カレンダーに追加</button>
+    `;
+  } else if (r.note) {
+    editSection = `<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">ご要望：${r.note}</div>`;
+  }
+  return `
+    <div class="hist-block">
+      <div class="hist-item">
+        <div><div style="font-weight:700;">${r.menu_names}</div><div class="d">${r.date} ${r.time}</div></div>
+        ${badge}
+      </div>
+      <div class="photo-pair">
+        ${mpPhotoHtml(stylePhotoForDisplay, "希望スタイル", "写真なし")}
+        ${mpPhotoHtml(r.after_photo_path, "施術後", isWait ? "来店後に追加されます" : "写真なし")}
+      </div>
+      ${editSection}
     </div>`;
-  loadCustomers();
 }
 
-async function uploadKartePhoto(karteId, input) {
+function renderMpHistory() {
+  document.getElementById("mp-history").innerHTML = mpReservations.map(mpHistoryItemHtml).join("")
+    || `<div style="font-size:12.5px;color:var(--text-muted);">予約履歴はまだありません</div>`;
+}
+
+async function onMpPhotoSelected(id, input) {
+  const preview = document.getElementById(`mp-photo-preview-${id}`);
   if (!input.files || !input.files[0]) return;
-  const label = input.closest(".photo-upload-btn");
   try {
-    const photo = await resizeImageFileToDataUrl(input.files[0]);
-    await api(`/api/staff/karte/${karteId}/photo`, { method: "POST", body: JSON.stringify({ photo }) });
-    if (selectedCustomerId) selectCustomer(selectedCustomerId);
+    const dataUrl = await resizeImageFileToDataUrl(input.files[0]);
+    mpEditPhotos[id] = dataUrl;
+    if (preview) preview.innerHTML = `<img src="${dataUrl}" style="width:56px;height:56px;object-fit:cover;border-radius:8px;">`;
   } catch (e) {
-    if (label) label.insertAdjacentHTML("afterend", `<div style="font-size:11px;color:var(--warning);margin-top:4px;">写真のアップロードに失敗しました：${e.message}</div>`);
+    if (preview) preview.innerHTML = `<div style="font-size:11px;color:var(--warning);">写真の読み込みに失敗しました</div>`;
   }
 }
 
-/* ---------------- SHIFT ---------------- */
-const SHIFT_CYCLE = ["off", "9-18", "10-19"];
-async function loadShift() {
-  const data = await api(`/api/staff/shifts?weekStart=${currentWeekStart}`);
-  let html = `<div class="hd"></div>` + data.days.map(d => `<div class="hd">${d.slice(5).replace("-", "/")}</div>`).join("");
-  data.grid.forEach(row => {
-    html += `<div class="nm-cell"><div class="av2">${row.name[0]}</div>${row.name}</div>`;
-    row.cells.forEach(c => {
-      const off = c.label === "off";
-      html += `<button class="shift-cell ${off ? "off" : "on"}" onclick="cycleShift('${row.stylistId}','${c.date}','${c.label}')">${off ? "休み" : c.label}</button>`;
-    });
-  });
-  document.getElementById("shift-grid").innerHTML = html;
-}
-async function cycleShift(stylistId, date, currentLabel) {
-  const idx = SHIFT_CYCLE.indexOf(currentLabel);
-  const next = SHIFT_CYCLE[(idx + 1) % SHIFT_CYCLE.length];
-  await api("/api/staff/shifts", { method: "POST", body: JSON.stringify({ stylistId, date, label: next }) });
-  loadShift();
-}
-function shiftWeek(days) {
-  currentWeekStart = addDays(currentWeekStart, days);
-  loadShift();
-}
-
-/* ---------------- MENU MANAGEMENT ---------------- */
-async function loadMenus() {
-  document.getElementById("menu-error").classList.remove("show");
-  const rows = await api("/api/menus");
-  document.getElementById("menu-body").innerHTML = rows.map(m => `
-    <tr data-id="${m.id}">
-      <td><input class="cell-input" id="m-name-${m.id}" value="${m.name}"></td>
-      <td><input class="cell-input" id="m-meta-${m.id}" value="${m.meta || ""}"></td>
-      <td><input class="cell-input" id="m-price-${m.id}" type="number" style="width:90px;" value="${m.price}"></td>
-      <td style="text-align:center;"><input type="checkbox" id="m-from-${m.id}" ${m.price_is_from ? "checked" : ""} style="accent-color:var(--brand);" title="目安価格（〜表示）"></td>
-      <td><input class="cell-input" id="m-discount-${m.id}" type="number" style="width:80px;" value="${m.student_discount || 0}"></td>
-      <td><input class="cell-input" id="m-duration-${m.id}" type="number" style="width:70px;" value="${m.duration_min}">分</td>
-      <td style="white-space:nowrap;">
-        <button class="btn-ghost" style="width:auto;display:inline;padding:6px 12px;" onclick="saveMenu('${m.id}')">保存</button>
-        <button class="btn-ghost" style="width:auto;display:inline;padding:6px 12px;color:var(--warning);" onclick="deleteMenu('${m.id}')">削除</button>
-      </td>
-    </tr>`).join("") || `<tr><td colspan="7" style="color:var(--text-muted);">メニューがまだありません</td></tr>`;
-}
-function showMenuMsg(text, isError) {
-  const errBox = document.getElementById("menu-error");
-  errBox.textContent = text;
-  errBox.style.background = isError ? "" : "#e7f6e7";
-  errBox.style.borderColor = isError ? "" : "var(--good)";
-  errBox.style.color = isError ? "" : "#0a6b0a";
-  errBox.classList.add("show");
-}
-async function saveMenu(id) {
-  const errBox = document.getElementById("menu-error");
-  errBox.classList.remove("show");
+async function saveMyPageEdit(id) {
+  const msgBox = document.getElementById(`mp-msg-${id}`);
+  if (msgBox) msgBox.classList.remove("show");
   try {
-    const nameEl = document.getElementById(`m-name-${id}`);
-    const metaEl = document.getElementById(`m-meta-${id}`);
-    const priceEl = document.getElementById(`m-price-${id}`);
-    const durationEl = document.getElementById(`m-duration-${id}`);
-    const fromEl = document.getElementById(`m-from-${id}`);
-    const discountEl = document.getElementById(`m-discount-${id}`);
-    if (!nameEl || !metaEl || !priceEl || !durationEl || !fromEl || !discountEl) {
-      showMenuMsg("画面の項目が正しく読み込めていません。ページを再読み込みしてもう一度お試しください。", true);
-      return;
+    const phone = document.getElementById("mp-phone").value.trim();
+    const noteEl = document.getElementById(`mp-note-${id}`);
+    const note = noteEl ? noteEl.value.trim() : "";
+    const body = { phone, note };
+    if (mpEditPhotos[id]) body.stylePhoto = mpEditPhotos[id];
+    const updated = await api(`/api/mypage/reservations/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+    delete mpEditPhotos[id];
+    const idx = mpReservations.findIndex(r => r.id === id);
+    if (idx !== -1) mpReservations[idx] = updated;
+    renderMpHistory();
+    const newMsgBox = document.getElementById(`mp-msg-${id}`);
+    if (newMsgBox) {
+      newMsgBox.textContent = "保存しました。";
+      newMsgBox.style.background = "#e7f6e7";
+      newMsgBox.style.borderColor = "var(--good)";
+      newMsgBox.style.color = "#0a6b0a";
+      newMsgBox.classList.add("show");
     }
-    const name = nameEl.value.trim();
-    const meta = metaEl.value.trim();
-    const price = parseInt(priceEl.value, 10);
-    const durationMin = parseInt(durationEl.value, 10);
-    const priceIsFrom = fromEl.checked;
-    const studentDiscount = parseInt(discountEl.value, 10) || 0;
-    if (!name || !(price >= 0) || !(durationMin > 0)) {
-      showMenuMsg("メニュー名・価格・所要時間を正しく入力してください。", true);
-      return;
+  } catch (e) {
+    if (msgBox) {
+      msgBox.textContent = "保存に失敗しました：" + e.message;
+      msgBox.classList.add("show");
     }
-    await api(`/api/staff/menus/${id}`, { method: "PATCH", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount }) });
-    await loadMenus();
-    showMenuMsg("保存しました。", false);
-  } catch (e) {
-    showMenuMsg("保存に失敗しました：" + e.message, true);
-  }
-}
-async function deleteMenu(id) {
-  try {
-    await api(`/api/staff/menus/${id}`, { method: "DELETE" });
-    loadMenus();
-  } catch (e) {
-    showMenuMsg("削除に失敗しました：" + e.message, true);
-  }
-}
-async function addMenu() {
-  const errBox = document.getElementById("menu-error");
-  errBox.classList.remove("show");
-  try {
-    const name = document.getElementById("menu-new-name").value.trim();
-    const meta = document.getElementById("menu-new-meta").value.trim();
-    const price = parseInt(document.getElementById("menu-new-price").value, 10);
-    const durationMin = parseInt(document.getElementById("menu-new-duration").value, 10);
-    const priceIsFrom = document.getElementById("menu-new-from").checked;
-    const studentDiscount = parseInt(document.getElementById("menu-new-discount").value, 10) || 0;
-    if (!name || !(price >= 0) || !(durationMin > 0)) {
-      showMenuMsg("メニュー名・価格・所要時間を正しく入力してください。", true);
-      return;
-    }
-    await api("/api/staff/menus", { method: "POST", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount }) });
-    document.getElementById("menu-new-name").value = "";
-    document.getElementById("menu-new-meta").value = "";
-    document.getElementById("menu-new-price").value = "";
-    document.getElementById("menu-new-duration").value = "";
-    document.getElementById("menu-new-discount").value = "";
-    document.getElementById("menu-new-from").checked = false;
-    await loadMenus();
-    showMenuMsg("追加しました。", false);
-  } catch (e) {
-    showMenuMsg("追加に失敗しました：" + e.message, true);
   }
 }
 
-/* ---------------- SETTINGS ---------------- */
-const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
-async function loadSettings() {
-  const s = await api("/api/staff/settings");
-  document.getElementById("set-open").value = s.openTime;
-  document.getElementById("set-close").value = s.closeTime;
-  document.getElementById("set-closed-weekdays").innerHTML = WEEKDAY_NAMES.map((name, i) => `
-    <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;">
-      <input type="checkbox" value="${i}" ${s.closedWeekdays.includes(i) ? "checked" : ""} style="accent-color:var(--brand);">${name}曜日
-    </label>`).join("");
-  renderClosedDates(s.closedDates || []);
-  document.getElementById("combo-last-order").value = s.comboPermColorLastOrder || "";
-  document.getElementById("cancel-fee-percent").value = s.cancellationFeePercent != null ? s.cancellationFeePercent : 50;
-  const menus = await api("/api/menus");
-  document.getElementById("last-order-list").innerHTML = menus.map(m => `
-    <div style="display:flex;align-items:center;gap:12px;">
-      <span style="min-width:110px;font-size:13px;font-weight:600;">${m.name}</span>
-      <input type="time" id="lo-${m.id}" value="${m.last_order_time || ""}" style="max-width:150px;border-radius:10px;border:1px solid var(--border);padding:8px 10px;font-size:13px;">
-    </div>`).join("") || `<div style="font-size:12px;color:var(--text-muted);">メニューがまだありません</div>`;
+function resetMyPage() {
+  document.getElementById("mypage-lookup").style.display = "block";
+  document.getElementById("mypage-result").style.display = "none";
+  document.getElementById("mp-phone").value = "";
+  mpReservations = [];
+  mpEditPhotos = {};
 }
 
-async function saveLastOrderSettings() {
-  const msg = document.getElementById("last-order-msg");
-  msg.classList.remove("show");
-  try {
-    const menus = await api("/api/menus");
-    for (const m of menus) {
-      const input = document.getElementById(`lo-${m.id}`);
-      if (!input) continue;
-      const lastOrderTime = input.value || "";
-      if (lastOrderTime === (m.last_order_time || "")) continue;
-      await api(`/api/staff/menus/${m.id}`, { method: "PATCH", body: JSON.stringify({ lastOrderTime }) });
-    }
-    await api("/api/staff/settings", {
-      method: "POST",
-      body: JSON.stringify({
-        openTime: document.getElementById("set-open").value,
-        closeTime: document.getElementById("set-close").value,
-        closedWeekdays: [...document.querySelectorAll("#set-closed-weekdays input:checked")].map(el => parseInt(el.value, 10)),
-        comboPermColorLastOrder: document.getElementById("combo-last-order").value || "",
-      }),
-    });
-    msg.textContent = "最終受付時間を保存しました。";
-    msg.style.background = "#e7f6e7";
-    msg.style.borderColor = "var(--good)";
-    msg.style.color = "#0a6b0a";
-    msg.classList.add("show");
-    loadSettings();
-  } catch (e) {
-    msg.textContent = "保存に失敗しました：" + e.message;
-    msg.style.background = "";
-    msg.style.borderColor = "";
-    msg.style.color = "";
-    msg.classList.add("show");
-  }
+async function init() {
+  [MENUS, STYLISTS, SETTINGS] = await Promise.all([
+    api("/api/menus"),
+    api("/api/stylists"),
+    api("/api/settings"),
+  ]);
+  renderMenuList();
 }
-
-async function saveCancelFeeSettings() {
-  const msg = document.getElementById("cancel-fee-msg");
-  msg.classList.remove("show");
-  const percentEl = document.getElementById("cancel-fee-percent");
-  const percent = parseInt(percentEl.value, 10);
-  if (isNaN(percent) || percent < 0 || percent > 100) {
-    msg.textContent = "0〜100の数値で入力してください。";
-    msg.classList.add("show");
-    return;
-  }
-  try {
-    await api("/api/staff/settings", {
-      method: "POST",
-      body: JSON.stringify({
-        openTime: document.getElementById("set-open").value,
-        closeTime: document.getElementById("set-close").value,
-        closedWeekdays: [...document.querySelectorAll("#set-closed-weekdays input:checked")].map(el => parseInt(el.value, 10)),
-        cancellationFeePercent: percent,
-      }),
-    });
-    msg.textContent = "キャンセルポリシーを保存しました。";
-    msg.style.background = "#e7f6e7";
-    msg.style.borderColor = "var(--good)";
-    msg.style.color = "#0a6b0a";
-    msg.classList.add("show");
-    loadSettings();
-  } catch (e) {
-    msg.textContent = "保存に失敗しました：" + e.message;
-    msg.style.background = "";
-    msg.style.borderColor = "";
-    msg.style.color = "";
-    msg.classList.add("show");
-  }
-}
-
-function renderClosedDates(dates) {
-  const box = document.getElementById("closed-date-list");
-  if (!dates.length) {
-    box.innerHTML = `<div style="font-size:12px;color:var(--text-muted);">登録されている臨時休業日はありません。</div>`;
-    return;
-  }
-  box.innerHTML = [...dates].sort().map(d => `
-    <div style="display:flex;align-items:center;justify-content:space-between;background:var(--brand-tint);border-radius:10px;padding:8px 12px;font-size:13px;">
-      <span>${d}</span>
-      <button onclick="removeClosedDate('${d}')" style="background:none;border:none;color:var(--critical);font-size:12px;cursor:pointer;">削除</button>
-    </div>`).join("");
-}
-
-async function addClosedDate() {
-  const msg = document.getElementById("closed-date-msg");
-  msg.classList.remove("show");
-  const date = document.getElementById("closed-date-input").value;
-  if (!date) {
-    msg.textContent = "日付を選択してください。";
-    msg.classList.add("show");
-    return;
-  }
-  try {
-    const res = await api("/api/staff/closed-dates", { method: "POST", body: JSON.stringify({ date }) });
-    document.getElementById("closed-date-input").value = "";
-    renderClosedDates(res.closedDates || []);
-  } catch (e) {
-    msg.textContent = "登録に失敗しました：" + e.message;
-    msg.classList.add("show");
-  }
-}
-
-async function removeClosedDate(date) {
-  try {
-    await api(`/api/staff/closed-dates/${date}`, { method: "DELETE" });
-    loadSettings();
-  } catch (e) {
-    const msg = document.getElementById("closed-date-msg");
-    msg.textContent = "削除に失敗しました：" + e.message;
-    msg.classList.add("show");
-  }
-}
-async function saveSettings() {
-  const msg = document.getElementById("settings-msg");
-  msg.classList.remove("show");
-  const closedWeekdays = [...document.querySelectorAll("#set-closed-weekdays input:checked")].map(el => parseInt(el.value, 10));
-  try {
-    await api("/api/staff/settings", {
-      method: "POST",
-      body: JSON.stringify({
-        openTime: document.getElementById("set-open").value,
-        closeTime: document.getElementById("set-close").value,
-        closedWeekdays,
-      }),
-    });
-    msg.textContent = "設定を保存しました。";
-    msg.style.background = "#e7f6e7";
-    msg.style.borderColor = "var(--good)";
-    msg.style.color = "#0a6b0a";
-    msg.classList.add("show");
-  } catch (e) {
-    msg.textContent = "保存に失敗しました：" + e.message;
-    msg.style.background = "";
-    msg.style.borderColor = "";
-    msg.style.color = "";
-    msg.classList.add("show");
-  }
-}
-
-/* ---------------- INIT ---------------- */
-document.getElementById("login-password").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
-checkAuth();
+init();
