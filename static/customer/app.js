@@ -344,6 +344,11 @@ async function lookupMyPage() {
     document.getElementById("mp-pts").textContent = data.customer.points.toLocaleString() + " pt";
     mpEditPhotos = {};
     mpReservations = data.reservations;
+    // 予約履歴（新しい順）の中から、ステータスが「来店済み」の最新の日付を「前回の来店日」として表示する
+    const lastVisited = mpReservations.find(r => r.status === "visited");
+    document.getElementById("mp-lastvisit").textContent = lastVisited
+      ? `前回の来店日：${lastVisited.date.replace(/-/g, "/")}`
+      : "前回の来店日：ご来店履歴はまだありません";
     renderMpHistory();
   } catch (e) {
     errBox.textContent = "取得に失敗しました。もう一度お試しください。";
