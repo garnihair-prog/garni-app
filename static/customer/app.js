@@ -8,6 +8,7 @@ let booking = { date: null, dateLabel: null, stylistId: null, stylistName: null,
 let stylePhotoDataUrl = null;
 let mpReservations = [];
 let mpEditPhotos = {};
+let rfRewards = [];
 let calMonthOffset = 0; // 0=今月、1=来月...（カレンダーの月移動用）
 const MAX_CAL_MONTHS_AHEAD = 2; // 何ヶ月先まで予約可能にするか（今月含めて3ヶ月分）
 const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
@@ -241,7 +242,7 @@ async function finishBooking() {
   errBox.classList.remove("show");
   btn.disabled = true;
   try {
-    await api("/api/reservations", {
+    const created = await api("/api/reservations", {
       method: "POST",
       body: JSON.stringify({
         date: booking.date,
@@ -254,11 +255,20 @@ async function finishBooking() {
         customerAge: document.getElementById("in-age").value ? parseInt(document.getElementById("in-age").value, 10) : null,
         note: document.getElementById("in-note").value.trim(),
         stylePhoto: stylePhotoDataUrl,
+        referralCode: document.getElementById("in-referral-code").value.trim(),
       }),
     });
     stylePhotoDataUrl = null;
     document.getElementById("style-photo-preview").innerHTML = "";
     document.getElementById("in-style-photo").value = "";
+    document.getElementById("in-referral-code").value = "";
+    const noteBox = document.getElementById("success-referral-note");
+    if (created.referralApplied) {
+      noteBox.textContent = "紹介コードが適用されました。ご来店が完了すると、紹介してくれた方に500円割引クーポンが贈呈されます。";
+      noteBox.style.display = "block";
+    } else {
+      noteBox.style.display = "none";
+    }
     showCScreen("c-success");
   } catch (e) {
     errBox.textContent = e.message + "（別の時間帯を選び直してください）";
@@ -464,6 +474,74 @@ function resetMyPage() {
   mpEditPhotos = {};
 }
 
+/* ---------------- お客様紹介 ---------------- */
+function rfRewardStatusBadge(r) {
+  if (r.status === "used") return '<span class="badge done">使用済み</span>';
+  if (r.status === "expired") return '<span class="badge cancel">期限切れ</span>';
+  return '<span class="badge upcoming">利用可能</span>';
+}
+function rfRewardItemHtml(r) {
+  return `
+    <div class="rf-reward-item">
+      <div>
+        <div class="rf-r-name">${r.referred_customer_name || "お友達"}様のご紹介</div>
+        <div class="rf-r-date">発行日 ${r.issued_at} ／ 有効期限 ${r.expires_at}</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-weight:700;">¥${r.amount.toLocaleString()}引き</div>
+        ${rfRewardStatusBadge(r)}
+      </div>
+    </div>`;
+}
+function renderRfRewards() {
+  document.getElementById("rf-rewards").innerHTML = rfRewards.map(rfRewardItemHtml).join("")
+    || `<div style="font-size:12.5px;color:var(--text-muted);">まだ紹介クーポンはありません</div>`;
+}
+
+async function lookupReferral() {
+  const phone = document.getElementById("rf-phone").value.trim();
+  const errBox = document.getElementById("referral-error");
+  errBox.classList.remove("show");
+  if (!phone) { errBox.textContent = "電話番号を入力してください。"; errBox.classList.add("show"); return; }
+  try {
+    const data = await api(`/api/referral?phone=${encodeURIComponent(phone)}`);
+    if (!data.found) {
+      errBox.textContent = "ご予約情報が見つかりませんでした。予約時と同じ電話番号でお試しください。";
+      errBox.classList.add("show");
+      return;
+    }
+    document.getElementById("referral-lookup").style.display = "none";
+    document.getElementById("referral-result").style.display = "block";
+    document.getElementById("rf-code").textContent = data.referralCode;
+    rfRewards = data.rewards;
+    renderRfRewards();
+    const url = `${location.origin}/?ref=${encodeURIComponent(data.referralCode)}`;
+    QRCode.renderToCanvas(document.getElementById("rf-qr"), url, { scale: 5, border: 3 });
+  } catch (e) {
+    errBox.textContent = "取得に失敗しました。もう一度お試しください。";
+    errBox.classList.add("show");
+  }
+}
+
+async function copyReferralCode() {
+  const code = document.getElementById("rf-code").textContent;
+  const btn = document.getElementById("rf-copy-btn");
+  try {
+    await navigator.clipboard.writeText(code);
+    btn.textContent = "コピーしました！";
+  } catch (e) {
+    btn.textContent = code;
+  }
+  setTimeout(() => { btn.textContent = "紹介コードをコピー"; }, 2000);
+}
+
+function resetReferral() {
+  document.getElementById("referral-lookup").style.display = "block";
+  document.getElementById("referral-result").style.display = "none";
+  document.getElementById("rf-phone").value = "";
+  rfRewards = [];
+}
+
 async function init() {
   [MENUS, STYLISTS, SETTINGS] = await Promise.all([
     api("/api/menus"),
@@ -471,5 +549,10 @@ async function init() {
     api("/api/settings"),
   ]);
   renderMenuList();
+  // URLに ?ref=紹介コード が付いている場合、予約時の紹介コード欄に自動入力する
+  const refCode = new URLSearchParams(location.search).get("ref");
+  if (refCode) {
+    document.getElementById("in-referral-code").value = refCode.trim().toUpperCase();
+  }
 }
 init();

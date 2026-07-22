@@ -104,6 +104,10 @@
             </label>
             <div id="style-photo-preview" style="margin-top:8px;"></div>
           </div>
+          <div class="field">
+            <label>紹介コード（任意）</label>
+            <input type="text" id="in-referral-code" placeholder="お友達の紹介コード（6桁）" maxlength="6" style="text-transform:uppercase;">
+          </div>
           <div class="error-banner" id="stylist-error"></div>
           <button class="btn-primary" onclick="goConfirm()">確認画面へ</button>
         </div>
@@ -123,6 +127,7 @@
             <div style="font-weight:700;font-size:15px;">ご予約が完了しました</div>
             <div style="font-size:12.5px;color:var(--text-muted);margin-top:6px;">当日はお気をつけてお越しください</div>
           </div>
+          <div class="banner" id="success-referral-note" style="display:none;"></div>
           <button class="btn-ghost" style="border:1px dashed var(--brand);border-radius:12px;color:var(--brand-dark);margin-bottom:10px;" onclick="downloadBookingICS()">📅 カレンダーに追加してリマインダー登録</button>
           <button class="btn-primary" onclick="showCScreen('c-home')">ホームに戻る</button>
         </div>
@@ -146,12 +151,35 @@
           </div>
         </div>
 
+        <div class="cscreen" id="c-referral">
+          <div class="section-title">お友達をご紹介</div>
+          <div class="banner">お友達がこの紹介コード・QRコードからご予約いただき、ご来店が完了すると、あなたに500円割引クーポンをプレゼントします（クーポンの有効期限は発行から6ヶ月間）。</div>
+          <div id="referral-lookup">
+            <div class="field"><label>電話番号で紹介コードを表示</label><input type="tel" id="rf-phone" placeholder="ご登録の電話番号"></div>
+            <button class="btn-primary" onclick="lookupReferral()">紹介コードを表示する</button>
+            <div class="error-banner" id="referral-error"></div>
+          </div>
+          <div id="referral-result" style="display:none;">
+            <div class="referral-card">
+              <div class="rf-label">あなたの紹介コード</div>
+              <div class="rf-code" id="rf-code"></div>
+              <div class="qr-wrap"><canvas id="rf-qr"></canvas></div>
+              <div class="rf-hint">画面を見せるか、コードを伝えるだけでOKです</div>
+              <button type="button" class="rf-copy-btn" id="rf-copy-btn" onclick="copyReferralCode()">紹介コードをコピー</button>
+            </div>
+            <div class="section-title">紹介クーポン</div>
+            <div class="list-card" id="rf-rewards"></div>
+            <button class="btn-ghost" onclick="resetReferral()">別の電話番号で照会する</button>
+          </div>
+        </div>
+
       </div>
       <div class="phone-tabbar">
         <button class="active" data-tab="c-home" onclick="showCScreen('c-home')"><span class="ic"></span>ホーム</button>
         <button data-tab="c-menu" onclick="showCScreen('c-menu')"><span class="ic"></span>メニュー</button>
         <button data-tab="c-date" onclick="startBooking()"><span class="ic"></span>予約</button>
         <button data-tab="c-mypage" onclick="showCScreen('c-mypage')"><span class="ic"></span>マイページ</button>
+        <button data-tab="c-referral" onclick="showCScreen('c-referral')"><span class="ic"></span>紹介</button>
       </div>
     </div>
   </div>
@@ -159,6 +187,7 @@
 </div>
 
 <script src="/static/shared/photo.js"></script>
+<script src="/static/shared/qrcode.js"></script>
 <script src="/static/customer/app.js"></script>
 </body>
 </html>
