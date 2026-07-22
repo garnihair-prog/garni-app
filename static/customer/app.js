@@ -194,7 +194,27 @@ function goConfirm() {
   }
   errBox.classList.remove("show");
   renderConfirm();
+  renderDisclaimer();
+  document.getElementById("in-agree-disclaimer").checked = false;
+  document.getElementById("btn-confirm").disabled = true;
   showCScreen("c-confirm");
+}
+
+function renderDisclaimer() {
+  const feePercent = (SETTINGS && SETTINGS.cancellationFeePercent != null) ? SETTINGS.cancellationFeePercent : 50;
+  const feePercentFull = (SETTINGS && SETTINGS.cancellationFeePercentFull != null) ? SETTINGS.cancellationFeePercentFull : 100;
+  document.getElementById("disclaimer-body").innerHTML = `
+    <p><strong>施術結果について</strong><br>
+    ご希望のスタイル写真やご要望はあくまで目安です。髪質・髪の状態・当日の技術的判断により、イメージ通りの仕上がりにならない場合がございます。あらかじめご了承ください。</p>
+    <p><strong>ご予約・キャンセルについて</strong><br>
+    ご予約の変更・キャンセルはお早めにご連絡ください。土日祝のご予約について、前日のキャンセルは予約金額の${feePercent}%、当日キャンセル・無断キャンセルは${feePercentFull}%のキャンセル料を申し受ける場合がございます。</p>
+    <p><strong>その他</strong><br>
+    アレルギー体質やパッチテストが必要な薬剤を使用される場合は、事前に必ずお申し出ください。天災・交通事情など、やむを得ない事情により予約時間の変更をお願いする場合がございます。施術後のお写真は、お客様の許可をいただいた場合に限り、当店の広告・SNS等に使用させていただくことがあります。</p>
+  `;
+}
+
+function onDisclaimerAgreeChanged() {
+  document.getElementById("btn-confirm").disabled = !document.getElementById("in-agree-disclaimer").checked;
 }
 
 function endTimeLabel(startTime, durationMin) {

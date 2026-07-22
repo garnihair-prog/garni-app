@@ -116,8 +116,16 @@
           <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
           <div class="section-title">予約内容の確認</div>
           <div class="summary-box" id="confirm-summary"></div>
+          <div class="disclaimer-box" id="confirm-disclaimer">
+            <div class="disclaimer-title">ご予約前に必ずお読みください（免責事項）</div>
+            <div class="disclaimer-body" id="disclaimer-body"></div>
+          </div>
+          <label class="disclaimer-agree">
+            <input type="checkbox" id="in-agree-disclaimer" onchange="onDisclaimerAgreeChanged()">
+            <span>上記の内容を確認し、同意します</span>
+          </label>
           <div class="error-banner" id="confirm-error"></div>
-          <button class="btn-primary" id="btn-confirm" onclick="finishBooking()">この内容で予約する</button>
+          <button class="btn-primary" id="btn-confirm" onclick="finishBooking()" disabled>この内容で予約する</button>
           <button class="btn-ghost" onclick="showCScreen('c-stylist')">戻って修正する</button>
         </div>
 
