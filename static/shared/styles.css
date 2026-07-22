@@ -107,6 +107,14 @@ header.top a.switch-link { font-size: 12.5px; color: var(--brand-dark); text-dec
 .summary-box .row { display: flex; justify-content: space-between; padding: 4px 0; }
 .summary-box .row.total { font-weight: 700; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px; }
 
+.disclaimer-box { background: #fbfaf6; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; max-height: 220px; overflow-y: auto; }
+.disclaimer-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px; }
+.disclaimer-body p { font-size: 11.5px; color: var(--text-secondary); line-height: 1.6; margin: 0 0 10px; }
+.disclaimer-body p:last-child { margin-bottom: 0; }
+.disclaimer-body strong { color: var(--text-primary, #333); }
+.disclaimer-agree { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; color: var(--text-secondary); margin-bottom: 16px; cursor: pointer; }
+.disclaimer-agree input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--brand); flex: 0 0 auto; margin-top: 1px; }
+
 .field { margin-bottom: 12px; }
 .field label { font-size: 11.5px; color: var(--text-secondary); font-weight: 600; display: block; margin-bottom: 5px; }
 .field input, .field textarea, .field select { width: 100%; border-radius: 10px; border: 1px solid var(--border); padding: 10px; font-size: 13px; font-family: inherit; background: #fff; }
