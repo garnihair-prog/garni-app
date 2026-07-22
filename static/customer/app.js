@@ -10,6 +10,17 @@ let mpReservations = [];
 let mpEditPhotos = {};
 const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
 
+// Date型から「その端末のローカル日付」のYYYY-MM-DD文字列を作る。
+// d.toISOString() はUTCに変換してしまうため、日本(UTC+9)では日付が1日ずれることがあり
+// （例: 7/30 0:00 JST → toISOString()は"2026-07-29..."になる）、休業日判定や予約日がずれる
+// 原因になっていた。カレンダー表示・選択には必ずこちらを使う。
+function toLocalDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 async function api(path, options) {
   const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, options || {}));
   let data = null;
@@ -70,7 +81,7 @@ function renderCalendar() {
   for (let day = 1; day <= daysInMonth; day++) {
     const d = new Date(y, m, day);
     const isPast = d < new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const iso = d.toISOString().slice(0, 10);
+    const iso = toLocalDateStr(d);
     const isClosedWeekday = (SETTINGS.closedWeekdays || []).includes(d.getDay());
     const isClosedDate = (SETTINGS.closedDates || []).includes(iso);
     const isClosed = isClosedWeekday || isClosedDate;
@@ -339,6 +350,7 @@ function mpPhotoHtml(path, label, placeholder) {
 function mpHistoryItemHtml(r) {
   const badge = r.status === "visited" ? '<span class="badge done">来店済み</span>'
               : r.status === "cancel" ? '<span class="badge cancel">キャンセル</span>'
+              : r.status === "no_show" ? '<span class="badge cancel">無断キャンセル</span>'
               : '<span class="badge upcoming">予約済</span>';
   const isWait = r.status === "wait";
   const staged = mpEditPhotos[r.id];
