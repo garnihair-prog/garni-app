@@ -25,7 +25,12 @@ import jp_holidays
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
-UPLOADS_DIR = os.path.join(STATIC_DIR, "uploads")
+# GARNI_DATA_DIR を設定すると、アップロード写真の保存先を変更できる
+# （Dockerなどで永続ボリュームをマウントし、アプリ本体の更新とは切り離してデータを永続化する場合に使用）。
+# 未設定の場合は従来通り static/uploads に保存される。公開URL（/static/uploads/...）自体は変わらない。
+DATA_DIR = os.environ.get("GARNI_DATA_DIR")
+UPLOADS_DIR = os.path.join(DATA_DIR, "uploads") if DATA_DIR else os.path.join(STATIC_DIR, "uploads")
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 MAX_PHOTO_BYTES = 6 * 1024 * 1024  # 6MB（アップロード前にブラウザ側でリサイズ済みの想定）
 
 STAFF_PASSWORD = os.environ.get("GARNI_STAFF_PASSWORD", "garni2026")
@@ -122,8 +127,9 @@ def save_data_url_image(data_url, dest_subdir, filename_base):
     full_path = os.path.join(dest_dir, filename)
     with open(full_path, "wb") as f:
         f.write(raw)
-    rel = os.path.relpath(full_path, STATIC_DIR).replace(os.sep, "/")
-    return f"/static/{rel}"
+    # 公開URLは常に /static/uploads/... 形式（UPLOADS_DIRの実体がSTATIC_DIR配下でなくても同じ）
+    rel = os.path.relpath(full_path, UPLOADS_DIR).replace(os.sep, "/")
+    return f"/static/uploads/{rel}"
 
 
 AGE_BUCKET_ORDER = ["10代以下", "20代", "30代", "40代", "50代", "60代以上", "未回答"]
@@ -327,6 +333,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_file(os.path.join(STATIC_DIR, "staff", "index.html"))
         if path.startswith("/static/"):
             rel = path[len("/static/"):]
+            if rel.startswith("uploads/"):
+                # アップロード写真は GARNI_DATA_DIR（設定時）配下から配信する。
+                # 公開URL（/static/uploads/...）はSTATIC_DIRと同じ場所にある場合と変わらない。
+                full = os.path.normpath(os.path.join(UPLOADS_DIR, rel[len("uploads/"):]))
+                if not full.startswith(UPLOADS_DIR):
+                    return self.send_json(403, {"error": "forbidden"})
+                return self.send_file(full)
             full = os.path.normpath(os.path.join(STATIC_DIR, rel))
             if not full.startswith(STATIC_DIR):
                 return self.send_json(403, {"error": "forbidden"})
