@@ -565,8 +565,19 @@ class Handler(BaseHTTPRequestHandler):
                 """,
                 (cust["id"],),
             ).fetchall()
+            expire_stale_referral_rewards(conn, cust["id"])
+            conn.commit()
+            rewards = conn.execute(
+                "SELECT * FROM referral_rewards WHERE referrer_customer_id=? ORDER BY issued_at DESC",
+                (cust["id"],),
+            ).fetchall()
             conn.close()
-            return self.send_json(200, {"found": True, "customer": row_to_dict(cust), "reservations": rows_to_list(resv)})
+            return self.send_json(200, {
+                "found": True,
+                "customer": row_to_dict(cust),
+                "reservations": rows_to_list(resv),
+                "rewards": rows_to_list(rewards),
+            })
 
         if path == "/api/referral":
             phone = qs.get("phone", "").strip()
