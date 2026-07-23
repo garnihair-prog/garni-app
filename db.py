@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS customers (
     age INTEGER,         -- 予約時にお客様が任意入力
     referral_code TEXT UNIQUE,          -- お客様紹介機能：このお客様自身の紹介コード
     referred_by_customer_id TEXT,       -- お客様紹介機能：このお客様を紹介してくれた既存客のcustomer_id（新規客のみ設定）
+    archived_at TEXT,                   -- 転勤等で削除されたお客様の削除日時。NULLなら通常のお客様（顧客一覧に表示）。
+                                         -- 過去の予約・カルテ・売上データは削除後も保持され、ダッシュボード等の集計にはそのまま反映される。
+                                         -- 同じ電話番号で再度ご予約が入った場合は自動的に元に戻る（NULLに戻す）。
     created_at TEXT NOT NULL
 );
 
@@ -177,6 +180,8 @@ def init_db():
         conn.execute("ALTER TABLE customers ADD COLUMN referral_code TEXT")
     if "referred_by_customer_id" not in cust_cols:
         conn.execute("ALTER TABLE customers ADD COLUMN referred_by_customer_id TEXT")
+    if "archived_at" not in cust_cols:
+        conn.execute("ALTER TABLE customers ADD COLUMN archived_at TEXT")
     # 紹介コードが未発行の既存顧客（お客様紹介機能の追加前から登録されている顧客）に発行する
     no_code_rows = conn.execute("SELECT id FROM customers WHERE referral_code IS NULL").fetchall()
     for row in no_code_rows:

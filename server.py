@@ -646,7 +646,7 @@ class Handler(BaseHTTPRequestHandler):
             conn = db.get_conn()
             rows = conn.execute(
                 """SELECT c.*, (SELECT MAX(date) FROM reservations r WHERE r.customer_id=c.id) as last_visit
-                   FROM customers c ORDER BY last_visit DESC"""
+                   FROM customers c WHERE c.archived_at IS NULL ORDER BY last_visit DESC"""
             ).fetchall()
             conn.close()
             return self.send_json(200, rows_to_list(rows))
@@ -898,6 +898,9 @@ class Handler(BaseHTTPRequestHandler):
                     conn.execute("UPDATE customers SET gender=? WHERE id=?", (gender, customer_id))
                 if age is not None:
                     conn.execute("UPDATE customers SET age=? WHERE id=?", (age, customer_id))
+                if cust["archived_at"] is not None:
+                    # 削除済み（転勤等）のお客様が同じ電話番号で再度ご予約された場合、自動的に顧客一覧に復帰させる
+                    conn.execute("UPDATE customers SET archived_at=NULL WHERE id=?", (customer_id,))
             else:
                 customer_id = db.new_id()
                 referral_code = (body.get("referralCode") or "").strip().upper()
@@ -1080,6 +1083,23 @@ class Handler(BaseHTTPRequestHandler):
             date = m.group(1)
             conn = db.get_conn()
             conn.execute("DELETE FROM closed_dates WHERE date=?", (date,))
+            conn.commit()
+            conn.close()
+            return self.send_json(200, {"ok": True})
+
+        m = re.match(r"^/api/staff/customers/([\w-]+)$", path)
+        if m:
+            if not self.require_staff():
+                return
+            cid = m.group(1)
+            conn = db.get_conn()
+            cust = conn.execute("SELECT id FROM customers WHERE id=?", (cid,)).fetchone()
+            if not cust:
+                conn.close()
+                return self.send_json(404, {"error": "not found"})
+            # 顧客レコード自体は削除せず archived_at を記録するのみ（過去の予約・カルテ・売上データはそのまま保持され、
+            # ダッシュボード等の集計にも引き続き反映される）。顧客一覧・顧客カルテからは表示されなくなる。
+            conn.execute("UPDATE customers SET archived_at=? WHERE id=?", (db.now_iso(), cid))
             conn.commit()
             conn.close()
             return self.send_json(200, {"ok": True})
