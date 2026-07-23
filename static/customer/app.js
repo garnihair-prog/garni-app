@@ -10,6 +10,7 @@ let mpReservations = [];
 let mpEditPhotos = {};
 let rfRewards = [];
 let mpCancelConfirmId = null; // マイページで「キャンセルしますか？」の確認表示中の予約ID（一度に1件まで）
+let mpRewards = []; // マイページで表示する、このお客様が獲得した紹介クーポン一覧
 let calMonthOffset = 0; // 0=今月、1=来月...（カレンダーの月移動用）
 const MAX_CAL_MONTHS_AHEAD = 2; // 何ヶ月先まで予約可能にするか（今月含めて3ヶ月分）
 const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
@@ -380,6 +381,8 @@ async function lookupMyPage() {
     document.getElementById("mp-lastvisit").textContent = lastVisited
       ? `前回の来店日：${lastVisited.date.replace(/-/g, "/")}`
       : "前回の来店日：ご来店履歴はまだありません";
+    mpRewards = data.rewards || [];
+    renderMpRewards();
     renderMpHistory();
   } catch (e) {
     errBox.textContent = "取得に失敗しました。もう一度お試しください。";
@@ -455,6 +458,11 @@ function mpHistoryItemHtml(r) {
 function renderMpHistory() {
   document.getElementById("mp-history").innerHTML = mpReservations.map(mpHistoryItemHtml).join("")
     || `<div style="font-size:12.5px;color:var(--text-muted);">予約履歴はまだありません</div>`;
+}
+
+function renderMpRewards() {
+  document.getElementById("mp-rewards").innerHTML = mpRewards.map(rfRewardItemHtml).join("")
+    || `<div style="font-size:12.5px;color:var(--text-muted);">まだ紹介クーポンはありません</div>`;
 }
 
 async function onMpPhotoSelected(id, input) {
@@ -554,6 +562,7 @@ function resetMyPage() {
   mpReservations = [];
   mpEditPhotos = {};
   mpCancelConfirmId = null;
+  mpRewards = [];
 }
 
 /* ---------------- お客様紹介 ---------------- */
