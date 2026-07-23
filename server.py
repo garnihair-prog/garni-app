@@ -351,6 +351,35 @@ def send_owner_notification_email(resv_dict, menu_names):
         sys.stderr.write(f"[notify] オーナー通知メールの送信に失敗しました: {e}\n")
 
 
+def send_owner_cancellation_email(resv_dict, menu_names, cancellation_fee):
+    """お客様がマイページから予約をキャンセルしたことをオーナー様へメールで通知する。
+    GARNI_SMTP_USER / GARNI_SMTP_PASSWORD が設定されていない場合は何もせずスキップする。"""
+    if not (SMTP_USER and SMTP_PASSWORD and NOTIFY_EMAIL):
+        return
+    try:
+        fee_line = f"キャンセル料：¥{cancellation_fee:,}" if cancellation_fee else "キャンセル料：なし"
+        body = (
+            "お客様がマイページからご予約をキャンセルされました。\n\n"
+            f"お名前：{resv_dict['customer_name']}\n"
+            f"電話番号：{resv_dict['customer_phone']}\n"
+            f"日時：{resv_dict['date']} {resv_dict['time']}\n"
+            f"メニュー：{menu_names}\n"
+            f"{fee_line}\n"
+            "\n"
+            "※このメールはGARNIアプリから自動送信されています。"
+        )
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = f"【GARNI】お客様によるキャンセル：{resv_dict['date']} {resv_dict['time']} {resv_dict['customer_name']}様"
+        msg["From"] = SMTP_USER
+        msg["To"] = NOTIFY_EMAIL
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, [NOTIFY_EMAIL], msg.as_string())
+    except Exception as e:
+        sys.stderr.write(f"[notify] キャンセル通知メールの送信に失敗しました: {e}\n")
+
+
 # ---------------------------------------------------------------- handler
 class Handler(BaseHTTPRequestHandler):
     server_version = "GarniApp/1.0"
@@ -1163,6 +1192,28 @@ class Handler(BaseHTTPRequestHandler):
             if resv["status"] != "wait":
                 conn.close()
                 return self.send_json(400, {"error": "来店済み・キャンセル済みの予約は編集できません"})
+
+            if body.get("action") == "cancel":
+                settings = get_settings(conn)
+                cancellation_fee = compute_cancellation_fee("cancel", resv["date"], resv["total_price"], settings)
+                conn.execute(
+                    "UPDATE reservations SET status='cancel', cancellation_fee=? WHERE id=?",
+                    (cancellation_fee, rid),
+                )
+                conn.commit()
+                updated = conn.execute(
+                    """
+                    SELECT r.*, k.photo_path AS after_photo_path
+                    FROM reservations r
+                    LEFT JOIN karte_entries k ON k.reservation_id = r.id
+                    WHERE r.id=?
+                    """,
+                    (rid,),
+                ).fetchone()
+                conn.close()
+                send_owner_cancellation_email(row_to_dict(updated), resv["menu_names"], cancellation_fee)
+                return self.send_json(200, row_to_dict(updated))
+
             note = body.get("note", resv["note"])
             if "stylePhoto" in body and body.get("stylePhoto"):
                 new_path = save_data_url_image(body.get("stylePhoto"), "reservations", rid)
