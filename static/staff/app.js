@@ -256,15 +256,26 @@ async function loadCustomers() {
       <div><div class="nm">${c.name}</div><div class="lv">${c.rank}</div></div>
       <div class="lv">最終来店 ${c.last_visit || "―"}</div>
     </div>`).join("");
-  if (!selectedCustomerId && rows.length) selectCustomer(rows[0].id);
+  if (!rows.length) {
+    selectedCustomerId = null;
+    document.getElementById("karte-detail").innerHTML = `<div style="font-size:12px;color:var(--text-muted);">お客様データがありません</div>`;
+    return;
+  }
+  if (!selectedCustomerId || !rows.some(c => c.id === selectedCustomerId)) selectCustomer(rows[0].id);
 }
 async function selectCustomer(id) {
   selectedCustomerId = id;
   document.querySelectorAll(".cust-row").forEach(r => r.classList.remove("sel"));
   const data = await api(`/api/staff/customers/${id}`);
   document.getElementById("karte-detail").innerHTML = `
-    <div style="font-weight:700;font-size:15px;">${data.customer.name}</div>
-    <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">${data.customer.rank} ／ 電話：${data.customer.phone} ／ ${data.customer.points}pt</div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div>
+        <div style="font-weight:700;font-size:15px;">${data.customer.name}</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">${data.customer.rank} ／ 電話：${data.customer.phone} ／ ${data.customer.points}pt</div>
+      </div>
+      <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--critical);border-radius:8px;color:var(--critical);font-size:11.5px;flex:0 0 auto;" onclick="deleteCustomer('${data.customer.id}', '${data.customer.name.replace(/'/g, "\\'")}')">お客様を削除</button>
+    </div>
+    <div class="error-banner" id="karte-msg"></div>
     ${referralInfoHtml(data)}
     <div class="karte-history">
       ${data.history.map(h => `
@@ -288,6 +299,22 @@ async function selectCustomer(id) {
         </div>`).join("") || `<div style="font-size:12px;color:var(--text-muted);">来店履歴はまだありません</div>`}
     </div>`;
   loadCustomers();
+}
+
+async function deleteCustomer(id, name) {
+  const ok = confirm(`${name}様を顧客一覧から削除します。\n過去の予約・カルテ・売上データは削除されず、ダッシュボード等の集計にはそのまま残ります。\nよろしいですか？`);
+  if (!ok) return;
+  try {
+    await api(`/api/staff/customers/${id}`, { method: "DELETE" });
+    selectedCustomerId = null;
+    loadCustomers();
+  } catch (e) {
+    const msgBox = document.getElementById("karte-msg");
+    if (msgBox) {
+      msgBox.textContent = e.message || "削除に失敗しました";
+      msgBox.classList.add("show");
+    }
+  }
 }
 
 /* ---------------- お客様紹介（スタッフ側） ---------------- */
