@@ -9,6 +9,7 @@ let stylePhotoDataUrl = null;
 let mpReservations = [];
 let mpEditPhotos = {};
 let rfRewards = [];
+let mpCancelConfirmId = null; // マイページで「キャンセルしますか？」の確認表示中の予約ID（一度に1件まで）
 let calMonthOffset = 0; // 0=今月、1=来月...（カレンダーの月移動用）
 const MAX_CAL_MONTHS_AHEAD = 2; // 何ヶ月先まで予約可能にするか（今月含めて3ヶ月分）
 const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
@@ -406,6 +407,17 @@ function mpHistoryItemHtml(r) {
   let editSection = "";
   if (isWait) {
     const noteVal = (r.note || "").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const cancelSection = mpCancelConfirmId === r.id
+      ? `
+        <div style="background:#fbeaea;border:1px solid var(--critical);border-radius:10px;padding:10px 12px;margin-top:10px;font-size:12px;color:#7a1f1f;">
+          本当にこのご予約をキャンセルしますか？<br>
+          土日祝のご予約は、来店日までの日数に応じてキャンセル料が発生する場合があります。
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn-primary" style="background:var(--critical);" onclick="confirmCancelReservation('${r.id}')">キャンセルする</button>
+            <button class="btn-ghost" style="border:1px solid var(--border);border-radius:10px;" onclick="abortCancelReservation('${r.id}')">やめておく</button>
+          </div>
+        </div>`
+      : `<button class="btn-ghost" style="border:1px solid var(--critical);border-radius:10px;color:var(--critical);margin-top:10px;padding:8px;" onclick="requestCancelReservation('${r.id}')">予約をキャンセルする</button>`;
     editSection = `
       <div class="field" style="margin-top:10px;">
         <label>ご要望・リクエスト</label>
@@ -421,6 +433,7 @@ function mpHistoryItemHtml(r) {
       <div class="error-banner" id="mp-msg-${r.id}" style="margin-top:8px;"></div>
       <button class="btn-primary" style="margin-top:8px;max-width:160px;" onclick="saveMyPageEdit('${r.id}')">保存する</button>
       <button class="btn-ghost" style="border:1px dashed var(--brand);border-radius:10px;color:var(--brand-dark);margin-top:8px;padding:8px;" onclick="downloadICS('${r.date}', '${r.time}', ${r.duration_min || 60}, '${(r.menu_names || "").replace(/'/g, "\\'")}')">📅 カレンダーに追加</button>
+      ${cancelSection}
     `;
   } else if (r.note) {
     editSection = `<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">ご要望：${r.note}</div>`;
@@ -486,12 +499,61 @@ async function saveMyPageEdit(id) {
   }
 }
 
+function requestCancelReservation(id) {
+  mpCancelConfirmId = id;
+  renderMpHistory();
+}
+
+function abortCancelReservation(id) {
+  mpCancelConfirmId = null;
+  renderMpHistory();
+}
+
+async function confirmCancelReservation(id) {
+  const msgBox = document.getElementById(`mp-msg-${id}`);
+  try {
+    const phone = document.getElementById("mp-phone").value.trim();
+    const updated = await api(`/api/mypage/reservations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ phone, action: "cancel" }),
+    });
+    mpCancelConfirmId = null;
+    const idx = mpReservations.findIndex(r => r.id === id);
+    if (idx !== -1) mpReservations[idx] = updated;
+    renderMpHistory();
+    const feeMsg = updated.cancellation_fee
+      ? `キャンセルしました。キャンセル料：¥${updated.cancellation_fee.toLocaleString()}`
+      : "キャンセルしました。";
+    // renderMpHistory() でDOMが再構築されているため、キャンセル後は編集欄自体が表示されなくなる。
+    // 履歴の先頭に一時的なお知らせを表示する。
+    const historyBox = document.getElementById("mp-history");
+    if (historyBox) {
+      const note = document.createElement("div");
+      note.textContent = feeMsg;
+      note.style.cssText = "background:#e7f6e7;border:1px solid var(--good);color:#0a6b0a;border-radius:10px;padding:10px 12px;font-size:12px;margin-bottom:10px;";
+      historyBox.prepend(note);
+    }
+  } catch (e) {
+    mpCancelConfirmId = null;
+    renderMpHistory();
+    const newMsgBox = document.getElementById(`mp-msg-${id}`);
+    if (newMsgBox) {
+      newMsgBox.textContent = "キャンセルに失敗しました：" + e.message;
+      newMsgBox.classList.add("show");
+    } else if (msgBox) {
+      msgBox.textContent = "キャンセルに失敗しました：" + e.message;
+      msgBox.classList.add("show");
+    }
+  }
+}
+
 function resetMyPage() {
   document.getElementById("mypage-lookup").style.display = "block";
   document.getElementById("mypage-result").style.display = "none";
   document.getElementById("mp-phone").value = "";
   mpReservations = [];
   mpEditPhotos = {};
+  mpCancelConfirmId = null;
 }
 
 /* ---------------- お客様紹介 ---------------- */
