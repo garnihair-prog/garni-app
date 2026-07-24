@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS reservations (
     status TEXT NOT NULL DEFAULT 'wait',  -- wait / visited / cancel / no_show
     style_photo_path TEXT,     -- お客様が予約時にアップロードした「希望スタイル」参考写真
     cancellation_fee INTEGER,  -- 土日祝キャンセル時に自動計算されるキャンセル料（円）。対象外ならNULLまたは0
+    companions TEXT,           -- 複数人でのご来店（お連れ様）情報のJSON配列文字列。例: [{"name":"...","menuNames":"...","price":0,"durationMin":0}]
+                                -- お連れ様はお名前のみ記録する軽量な付随情報で、独立した顧客・カルテレコードは作成されない。NULLまたは'[]'なら本人のみのご予約。
     created_at TEXT NOT NULL,
     FOREIGN KEY (customer_id) REFERENCES customers(id),
     FOREIGN KEY (stylist_id) REFERENCES stylists(id)
@@ -356,6 +358,8 @@ def init_db():
         conn.execute("ALTER TABLE reservations ADD COLUMN style_photo_path TEXT")
     if "cancellation_fee" not in resv_cols:
         conn.execute("ALTER TABLE reservations ADD COLUMN cancellation_fee INTEGER")
+    if "companions" not in resv_cols:
+        conn.execute("ALTER TABLE reservations ADD COLUMN companions TEXT")
     karte_cols = {row["name"] for row in conn.execute("PRAGMA table_info(karte_entries)").fetchall()}
     if "photo_path" not in karte_cols:
         conn.execute("ALTER TABLE karte_entries ADD COLUMN photo_path TEXT")

@@ -111,7 +111,12 @@ def menu_duration_total(conn, menu_ids):
 
 
 def row_to_dict(row):
-    return {k: row[k] for k in row.keys()}
+    d = {k: row[k] for k in row.keys()}
+    if "companions" in d:
+        # お連れ様（複数人でのご来店）情報はDB上はJSON文字列で保持しているため、
+        # 呼び出し側が扱いやすいようリスト（お連れ様がいなければ空リスト）に変換する。
+        d["companions"] = json.loads(d["companions"]) if d["companions"] else []
+    return d
 
 
 def rows_to_list(rows):
@@ -234,6 +239,7 @@ def is_weekend_or_holiday(date_str):
 
 
 MIN_LEAD_MINUTES = 60  # 当日のご予約は、現在時刻からこの分数だけ後の時間帯からのみ受付可能にする
+MAX_COMPANIONS = 10  # 複数人でのご来店（お連れ様）の登録上限人数
 
 
 def same_day_min_start_min(date_str):
@@ -332,12 +338,17 @@ def send_owner_notification_email(resv_dict, menu_names):
     if not (SMTP_USER and SMTP_PASSWORD and NOTIFY_EMAIL):
         return
     try:
+        companions = resv_dict.get("companions") or []
+        companion_lines = "".join(
+            f"お連れ様：{c['name']}様（{c['menuNames']}）\n" for c in companions
+        )
         body = (
             "新しいご予約が入りました。\n\n"
             f"お名前：{resv_dict['customer_name']}\n"
             f"電話番号：{resv_dict['customer_phone']}\n"
             f"日時：{resv_dict['date']} {resv_dict['time']}\n"
             f"メニュー：{menu_names}\n"
+            f"{companion_lines}"
             f"金額：¥{resv_dict['total_price']:,}\n"
             f"ご要望：{resv_dict['note'] or 'なし'}\n"
             "\n"
@@ -363,12 +374,17 @@ def send_owner_cancellation_email(resv_dict, menu_names, cancellation_fee):
         return
     try:
         fee_line = f"キャンセル料：¥{cancellation_fee:,}" if cancellation_fee else "キャンセル料：なし"
+        companions = resv_dict.get("companions") or []
+        companion_lines = "".join(
+            f"お連れ様：{c['name']}様（{c['menuNames']}）\n" for c in companions
+        )
         body = (
             "お客様がマイページからご予約をキャンセルされました。\n\n"
             f"お名前：{resv_dict['customer_name']}\n"
             f"電話番号：{resv_dict['customer_phone']}\n"
             f"日時：{resv_dict['date']} {resv_dict['time']}\n"
             f"メニュー：{menu_names}\n"
+            f"{companion_lines}"
             f"{fee_line}\n"
             "\n"
             "※このメールはGARNIアプリから自動送信されています。"
@@ -909,11 +925,41 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
                 return self.send_json(400, {"error": "メニューを選択してください"})
             menu_names = "・".join(r["name"] for r in menu_rows)
+            required_consent_form_id_set = {r["consent_form_id"] for r in menu_rows if r["consent_form_id"]}
+
+            # お連れ様（複数人でのご来店、例：お子様連れ・ご家族一緒のご予約）の処理。
+            # お連れ様はお名前のみを記録する軽量な付随情報で、独立した顧客・カルテレコードは作らない。
+            # 価格・所要時間は必ずサーバー側でメニュー選択から再計算する（クライアント送信値は信用しない）。
+            all_menu_ids = list(menu_ids)  # 本人＋全お連れ様の合算メニューID（最終受付時間の判定などに使用）
+            companions_out = []
+            companions_in = body.get("companions") or []
+            if isinstance(companions_in, list):
+                for comp in companions_in[:MAX_COMPANIONS]:
+                    if not isinstance(comp, dict):
+                        continue
+                    comp_name = str(comp.get("name") or "").strip()
+                    comp_menu_ids = comp.get("menuIds")
+                    if not comp_name or not isinstance(comp_menu_ids, list) or not comp_menu_ids:
+                        continue
+                    comp_rows, comp_duration, comp_price = menu_duration_total(conn, comp_menu_ids)
+                    if not comp_rows:
+                        continue
+                    comp_menu_names = "・".join(r["name"] for r in comp_rows)
+                    companions_out.append({
+                        "name": comp_name,
+                        "menuNames": comp_menu_names,
+                        "price": comp_price,
+                        "durationMin": comp_duration,
+                    })
+                    total_duration += comp_duration
+                    total_price += comp_price
+                    all_menu_ids.extend(comp_menu_ids)
+                    required_consent_form_id_set.update(r["consent_form_id"] for r in comp_rows if r["consent_form_id"])
 
             # 選択したメニューに紐づく同意書（カラー・ブリーチ用、パーマ・縮毛矯正用など）への同意を検証する。
             # 必須の同意書IDは、お客様が送信した agreedConsentFormIds ではなく、サーバー側で
-            # メニュー選択から再計算した値を正とする（改ざん防止）。
-            required_consent_form_ids = sorted({r["consent_form_id"] for r in menu_rows if r["consent_form_id"]})
+            # メニュー選択（本人＋お連れ様全員分）から再計算した値を正とする（改ざん防止）。
+            required_consent_form_ids = sorted(required_consent_form_id_set)
             agreed_consent_form_ids = set(body.get("agreedConsentFormIds") or [])
             missing_consent_form_ids = [cid for cid in required_consent_form_ids if cid not in agreed_consent_form_ids]
             if missing_consent_form_ids:
@@ -941,7 +987,7 @@ class Handler(BaseHTTPRequestHandler):
             if req_start < open_min or req_end > close_min:
                 conn.close()
                 return self.send_json(409, {"error": f"選択したメニューの所要時間（{total_duration}分）だと営業時間内に収まりません"})
-            last_order_min = effective_last_order_min(conn, settings, menu_ids)
+            last_order_min = effective_last_order_min(conn, settings, all_menu_ids)
             if last_order_min is not None and req_start > last_order_min:
                 conn.close()
                 return self.send_json(409, {"error": f"選択したメニューの最終受付時間（{min_to_time(last_order_min)}）を過ぎています"})
@@ -990,12 +1036,13 @@ class Handler(BaseHTTPRequestHandler):
                     (customer_id, name, phone, "新規", 0, gender, age, referred_by, db.now_iso()),
                 )
 
+            companions_json = json.dumps(companions_out, ensure_ascii=False) if companions_out else None
             resv_id = db.new_id()
             conn.execute(
                 """INSERT INTO reservations
-                   (id, customer_id, customer_name, customer_phone, date, time, stylist_id, menu_names, total_price, duration_min, note, status, created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (resv_id, customer_id, name, phone, date, time_, stylist_id, menu_names, total_price, total_duration, note, "wait", db.now_iso()),
+                   (id, customer_id, customer_name, customer_phone, date, time, stylist_id, menu_names, total_price, duration_min, note, status, companions, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (resv_id, customer_id, name, phone, date, time_, stylist_id, menu_names, total_price, total_duration, note, "wait", companions_json, db.now_iso()),
             )
             style_photo_path = save_data_url_image(body.get("stylePhoto"), "reservations", resv_id)
             if style_photo_path:
