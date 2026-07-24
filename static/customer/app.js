@@ -3,6 +3,10 @@
 let MENUS = [];
 let STYLISTS = [];
 let SETTINGS = { closedWeekdays: [] };
+let CONSENT_FORMS = []; // 同意書マスタ（カラー・ブリーチ用、パーマ・縮毛矯正用など）
+let consentQueue = [];        // このご予約で同意が必要な同意書の配列（複数メニュー選択時は複数になりうる）
+let consentIndex = 0;         // consentQueue内で、現在表示している同意書の位置
+let consentAgreedFormIds = []; // 実際に「同意します」をクリックした同意書IDのリスト（予約送信時に送信）
 let selectedMenus = new Set();
 let booking = { date: null, dateLabel: null, stylistId: null, stylistName: null, time: null };
 let stylePhotoDataUrl = null;
@@ -195,11 +199,69 @@ function goConfirm() {
     return;
   }
   errBox.classList.remove("show");
+
+  // 選択したメニューに紐づく同意書（カラー・ブリーチ用、パーマ・縮毛矯正用など）を、
+  // 選択メニューの並び順で重複なく集める。パーマ＋カラーの同時予約など、複数の同意書が
+  // 必要な場合は、1つずつ順番に確認・同意していただく。
+  const requiredFormIds = [...selectedMenus]
+    .map(id => MENUS.find(m => m.id === id))
+    .filter(m => m && m.consent_form_id)
+    .map(m => m.consent_form_id);
+  const uniqueFormIds = [...new Set(requiredFormIds)];
+  consentQueue = uniqueFormIds.map(id => CONSENT_FORMS.find(f => f.id === id)).filter(Boolean);
+  consentIndex = 0;
+  consentAgreedFormIds = [];
+
+  if (consentQueue.length > 0) {
+    showConsentStep();
+  } else {
+    proceedToConfirmScreen();
+  }
+}
+
+function proceedToConfirmScreen() {
   renderConfirm();
   renderDisclaimer();
   document.getElementById("in-agree-disclaimer").checked = false;
   document.getElementById("btn-confirm").disabled = true;
   showCScreen("c-confirm");
+}
+
+function showConsentStep() {
+  const form = consentQueue[consentIndex];
+  document.getElementById("consent-progress").textContent =
+    consentQueue.length > 1 ? `同意書のご確認（${consentIndex + 1}/${consentQueue.length}）` : "同意書のご確認";
+  document.getElementById("consent-title").textContent = form.title;
+  document.getElementById("consent-body").innerHTML = form.body_html;
+  document.getElementById("in-agree-consent").checked = false;
+  document.getElementById("btn-consent-next").disabled = true;
+  document.getElementById("consent-error").classList.remove("show");
+  showCScreen("c-consent");
+}
+
+function onConsentAgreeChanged() {
+  document.getElementById("btn-consent-next").disabled = !document.getElementById("in-agree-consent").checked;
+}
+
+function consentNext() {
+  const form = consentQueue[consentIndex];
+  consentAgreedFormIds.push(form.id);
+  consentIndex++;
+  if (consentIndex < consentQueue.length) {
+    showConsentStep();
+  } else {
+    proceedToConfirmScreen();
+  }
+}
+
+function consentBack() {
+  if (consentIndex > 0) {
+    consentIndex--;
+    consentAgreedFormIds.pop();
+    showConsentStep();
+  } else {
+    showCScreen("c-info");
+  }
 }
 
 function renderDisclaimer() {
@@ -209,7 +271,7 @@ function renderDisclaimer() {
     <p><strong>施術結果について</strong><br>
     ご希望のスタイル写真やご要望はあくまで目安です。髪質・髪の状態・当日の技術的判断により、イメージ通りの仕上がりにならない場合がございます。あらかじめご了承ください。</p>
     <p><strong>ご予約・キャンセルについて</strong><br>
-    ご予約の変更・キャンセルはお早めにご連絡ください。土日祝のご予約について、前日のキャンセルは予約金額の${feePercent}%、当日キャンセル・無断キャンセルは${feePercentFull}%のキャンセル料を申し受ける場合がございます。</p>
+    ご予約の変更・キャンセルはお早めにご連絡ください。土日祝のご予約について、前日のキャンセルは予約金額の${feePercent}%、当日キャンセルは${feePercentFull}%のキャンセル料を申し受ける場合がございます。無断キャンセルの場合は、平日・土日祝を問わず、毎回予約金額の${feePercentFull}%のキャンセル料を申し受けます。</p>
     <p><strong>その他</strong><br>
     アレルギー体質やパッチテストが必要な薬剤を使用される場合は、事前に必ずお申し出ください。天災・交通事情など、やむを得ない事情により予約時間の変更をお願いする場合がございます。施術後のお写真は、お客様の許可をいただいた場合に限り、当店の広告・SNS等に使用させていただくことがあります。</p>
   `;
@@ -278,6 +340,7 @@ async function finishBooking() {
         note: document.getElementById("in-note").value.trim(),
         stylePhoto: stylePhotoDataUrl,
         referralCode: document.getElementById("in-referral-code").value.trim(),
+        agreedConsentFormIds: consentAgreedFormIds,
       }),
     });
     stylePhotoDataUrl = null;
@@ -634,10 +697,11 @@ function resetReferral() {
 }
 
 async function init() {
-  [MENUS, STYLISTS, SETTINGS] = await Promise.all([
+  [MENUS, STYLISTS, SETTINGS, CONSENT_FORMS] = await Promise.all([
     api("/api/menus"),
     api("/api/stylists"),
     api("/api/settings"),
+    api("/api/consent-forms"),
   ]);
   renderMenuList();
   // URLに ?ref=紹介コード が付いている場合、予約時の紹介コード欄に自動入力する

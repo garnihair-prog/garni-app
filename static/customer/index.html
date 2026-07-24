@@ -112,6 +112,22 @@
           <button class="btn-primary" onclick="goConfirm()">確認画面へ</button>
         </div>
 
+        <div class="cscreen" id="c-consent">
+          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span></span></div>
+          <div class="section-title" id="consent-progress">同意書のご確認</div>
+          <div class="disclaimer-box" id="consent-box">
+            <div class="disclaimer-title" id="consent-title"></div>
+            <div class="disclaimer-body" id="consent-body"></div>
+          </div>
+          <label class="disclaimer-agree">
+            <input type="checkbox" id="in-agree-consent" onchange="onConsentAgreeChanged()">
+            <span>上記の同意書の内容を確認し、同意します</span>
+          </label>
+          <div class="error-banner" id="consent-error"></div>
+          <button class="btn-primary" id="btn-consent-next" onclick="consentNext()" disabled>同意して次へ</button>
+          <button class="btn-ghost" onclick="consentBack()">戻る</button>
+        </div>
+
         <div class="cscreen" id="c-confirm">
           <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
           <div class="section-title">予約内容の確認</div>
