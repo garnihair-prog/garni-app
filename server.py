@@ -110,6 +110,25 @@ def menu_duration_total(conn, menu_ids):
     return rows, sum(r["duration_min"] for r in rows), sum(r["price"] for r in rows)
 
 
+# 薬剤の関係上、同時（同じご来店・同じ方）に施術できないメニューの組み合わせ。
+# ブリーチはパーマ・縮毛矯正と同時にはご予約いただけない。
+MENU_CONFLICT_GROUPS = [
+    ({"ブリーチ"}, {"パーマ", "縮毛矯正"}),
+]
+
+
+def menu_conflict_message(menu_rows):
+    """menu_rows（同一人物が選択したメニュー行）に、同時施術できない組み合わせが
+    含まれていればエラーメッセージを返す。問題なければ None。"""
+    names = {r["name"] for r in menu_rows}
+    for group_a, group_b in MENU_CONFLICT_GROUPS:
+        if names & group_a and names & group_b:
+            a_label = "・".join(sorted(names & group_a))
+            b_label = "・".join(sorted(names & group_b))
+            return f"{a_label}は{b_label}と同時にはご予約いただけません"
+    return None
+
+
 def row_to_dict(row):
     d = {k: row[k] for k in row.keys()}
     if "companions" in d:
@@ -924,6 +943,10 @@ class Handler(BaseHTTPRequestHandler):
             if not menu_rows:
                 conn.close()
                 return self.send_json(400, {"error": "メニューを選択してください"})
+            conflict_msg = menu_conflict_message(menu_rows)
+            if conflict_msg:
+                conn.close()
+                return self.send_json(400, {"error": conflict_msg})
             menu_names = "・".join(r["name"] for r in menu_rows)
             required_consent_form_id_set = {r["consent_form_id"] for r in menu_rows if r["consent_form_id"]}
 
@@ -944,6 +967,10 @@ class Handler(BaseHTTPRequestHandler):
                     comp_rows, comp_duration, comp_price = menu_duration_total(conn, comp_menu_ids)
                     if not comp_rows:
                         continue
+                    comp_conflict_msg = menu_conflict_message(comp_rows)
+                    if comp_conflict_msg:
+                        conn.close()
+                        return self.send_json(400, {"error": f"{comp_name}様：{comp_conflict_msg}"})
                     comp_menu_names = "・".join(r["name"] for r in comp_rows)
                     companions_out.append({
                         "name": comp_name,

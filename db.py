@@ -384,6 +384,21 @@ def init_db():
     has_consent_forms = conn.execute("SELECT COUNT(*) c FROM consent_forms").fetchone()["c"] > 0
     if not has_consent_forms:
         seed_consent_forms(conn)
+    # 既存DBに「ブリーチ」メニューが無ければ、カラーの直後に追加する（旧バージョンからの移行）。
+    # ブリーチはパーマ・縮毛矯正と薬剤の関係で同日施術ができないため、同意書はカラーと同じものを割り当てる。
+    has_bleach = conn.execute("SELECT COUNT(*) c FROM menu_items WHERE name='ブリーチ'").fetchone()["c"] > 0
+    if not has_bleach:
+        color_row = conn.execute("SELECT sort_order FROM menu_items WHERE name='カラー'").fetchone()
+        bleach_sort_order = (color_row["sort_order"] + 1) if color_row else 99
+        conn.execute(
+            "UPDATE menu_items SET sort_order = sort_order + 1 WHERE sort_order >= ?",
+            (bleach_sort_order,),
+        )
+        conn.execute(
+            "INSERT INTO menu_items (id, name, meta, price, student_discount, last_order_time, duration_min, sort_order, consent_form_id) "
+            "VALUES ('m-bleach', 'ブリーチ', 'ハイライト・グラデーション等応相談', 8800, 500, '16:00', 90, ?, 'cf-color')",
+            (bleach_sort_order,),
+        )
     settings_cols = {row["name"] for row in conn.execute("PRAGMA table_info(salon_settings)").fetchall()}
     if "combo_perm_color_last_order" not in settings_cols:
         conn.execute("ALTER TABLE salon_settings ADD COLUMN combo_perm_color_last_order TEXT")
@@ -442,9 +457,10 @@ def seed(conn):
     menus = [
         ("m-cut", "カット", "シャンプー・ブロー込み", 4400, 0, "17:00", 60, 0),
         ("m-color", "カラー", "一剤〜二剤", 6600, 500, "16:00", 120, 1),
-        ("m-perm", "パーマ", "コールド・デジタル選択可", 8800, 500, "16:00", 120, 2),
-        ("m-treat", "トリートメント", "集中補修", 3300, 0, None, 30, 3),
-        ("m-straight", "縮毛矯正", "くせ毛矯正", 11000, 0, "15:00", 180, 4),
+        ("m-bleach", "ブリーチ", "ハイライト・グラデーション等応相談", 8800, 500, "16:00", 90, 2),
+        ("m-perm", "パーマ", "コールド・デジタル選択可", 8800, 500, "16:00", 120, 3),
+        ("m-treat", "トリートメント", "集中補修", 3300, 0, None, 30, 4),
+        ("m-straight", "縮毛矯正", "くせ毛矯正", 11000, 0, "15:00", 180, 5),
     ]
     cur.executemany(
         "INSERT INTO menu_items (id, name, meta, price, student_discount, last_order_time, duration_min, sort_order) VALUES (?,?,?,?,?,?,?,?)",
