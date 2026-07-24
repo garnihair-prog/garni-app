@@ -114,7 +114,7 @@ async function loadDashboard() {
     <div class="stat-tile"><div class="label">本日の予約数（対応待ち）</div><div class="value">${data.todayReservations.filter(r => r.status === "wait").length}件</div></div>
   `;
   document.getElementById("dash-reserve-body").innerHTML = data.todayReservations.map(r => `
-    <tr><td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}</td><td>${r.menu_names}</td><td>${r.stylist_name}</td><td>${statusPillHtml(r.status)}</td></tr>
+    <tr><td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}${companionSummaryHtml(r)}</td><td>${r.menu_names}</td><td>${r.stylist_name}</td><td>${statusPillHtml(r.status)}</td></tr>
   `).join("") || `<tr><td colspan="5" style="color:var(--text-muted);">本日の予約はまだありません</td></tr>`;
   drawSalesChart(data.weeklySales);
   loadCustomerStats();
@@ -179,6 +179,20 @@ function drawSalesChart(weeklySales) {
   });
 }
 
+function escapeHtml(str) {
+  return String(str == null ? "" : str).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+// 複数人でのご来店（お連れ様）がいる予約に、その旨がひと目でわかるバッジを表示する
+function companionSummaryHtml(r) {
+  const comps = r.companions || [];
+  if (!comps.length) return "";
+  const title = comps.map(c => `${c.name}様：${c.menuNames}（¥${c.price.toLocaleString()}）`).join("\n");
+  return `<div class="companion-tag" title="${escapeHtml(title)}">＋お連れ様${comps.length}名</div>`;
+}
+
 /* ---------------- RESERVE MANAGEMENT ---------------- */
 function photoThumbHtml(path, alt) {
   if (!path) return `<span style="font-size:11px;color:var(--text-muted);">―</span>`;
@@ -208,7 +222,7 @@ async function loadReserveDate() {
   const rows = await api(`/api/staff/reservations?date=${date}`);
   document.getElementById("reserve-body").innerHTML = rows.map(r => `
     <tr>
-      <td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}</td><td>${r.customer_phone}</td><td>${r.menu_names}</td>
+      <td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}${companionSummaryHtml(r)}</td><td>${r.customer_phone}</td><td>${r.menu_names}</td>
       <td>${r.stylist_name}</td><td class="amt">¥${r.total_price.toLocaleString()}</td>
       <td>${photoThumbHtml(r.style_photo_path, "希望スタイル")}</td>
       <td>
