@@ -247,18 +247,23 @@ def same_day_min_start_min(date_str):
 
 def compute_cancellation_fee(status, date_str, total_price, settings):
     """キャンセル料（円）を計算する。
-    - 予約日が土日祝でなければ対象外（0円）。
-    - 無断キャンセル、または予約日当日（もしくはそれより後）のキャンセル → 「当日・無断キャンセル料」の割合（既定100%）。
-    - 予約日の前日のキャンセル → 「前日キャンセル料」の割合（既定50%）。
-    - 予約日の2日以上前のキャンセル → 無料（0%）。"""
+    - 無断キャンセル（no_show）：平日・土日祝を問わず、毎回「当日・無断キャンセル料」の割合（既定100%）を適用する。
+    - キャンセル（cancel、お客様都合の事前キャンセル）：予約日が土日祝の場合のみ対象（平日は0円）。
+      - 予約日当日（もしくはそれより後）のキャンセル → 「当日・無断キャンセル料」の割合（既定100%）。
+      - 予約日の前日のキャンセル → 「前日キャンセル料」の割合（既定50%）。
+      - 予約日の2日以上前のキャンセル → 無料（0%）。"""
     if status not in ("cancel", "no_show"):
         return 0
+    fee_percent_full = settings.get("cancellation_fee_percent_full", 100)
+    if status == "no_show":
+        # 無断キャンセルは平日・土日祝を問わず毎回満額のキャンセル料を申し受ける
+        return round(total_price * fee_percent_full / 100)
     if not is_weekend_or_holiday(date_str):
         return 0
     resv_date = datetime.date.fromisoformat(date_str)
     days_before = (resv_date - jst_today()).days
-    if status == "no_show" or days_before <= 0:
-        fee_percent = settings.get("cancellation_fee_percent_full", 100)
+    if days_before <= 0:
+        fee_percent = fee_percent_full
     elif days_before == 1:
         fee_percent = settings.get("cancellation_fee_percent", 50)
     else:
@@ -479,6 +484,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/menus":
             conn = db.get_conn()
             rows = conn.execute("SELECT * FROM menu_items ORDER BY sort_order").fetchall()
+            conn.close()
+            return self.send_json(200, rows_to_list(rows))
+
+        if path == "/api/consent-forms":
+            conn = db.get_conn()
+            rows = conn.execute("SELECT * FROM consent_forms ORDER BY sort_order").fetchall()
             conn.close()
             return self.send_json(200, rows_to_list(rows))
 
@@ -719,12 +730,21 @@ class Handler(BaseHTTPRequestHandler):
                     "SELECT name FROM customers WHERE id=?", (cust["referred_by_customer_id"],)
                 ).fetchone()
                 referred_by_name = referrer["name"] if referrer else None
+            consent_agreements = conn.execute(
+                "SELECT a.*, f.title AS form_title, r.date AS reservation_date "
+                "FROM consent_agreements a "
+                "JOIN consent_forms f ON f.id = a.consent_form_id "
+                "LEFT JOIN reservations r ON r.id = a.reservation_id "
+                "WHERE a.customer_id=? ORDER BY a.agreed_at DESC",
+                (cid,),
+            ).fetchall()
             conn.close()
             return self.send_json(200, {
                 "customer": row_to_dict(cust),
                 "history": rows_to_list(karte),
                 "referralRewards": rows_to_list(referral_rewards),
                 "referredByName": referred_by_name,
+                "consentAgreements": rows_to_list(consent_agreements),
             })
 
         if path == "/api/staff/shifts":
@@ -890,6 +910,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": "メニューを選択してください"})
             menu_names = "・".join(r["name"] for r in menu_rows)
 
+            # 選択したメニューに紐づく同意書（カラー・ブリーチ用、パーマ・縮毛矯正用など）への同意を検証する。
+            # 必須の同意書IDは、お客様が送信した agreedConsentFormIds ではなく、サーバー側で
+            # メニュー選択から再計算した値を正とする（改ざん防止）。
+            required_consent_form_ids = sorted({r["consent_form_id"] for r in menu_rows if r["consent_form_id"]})
+            agreed_consent_form_ids = set(body.get("agreedConsentFormIds") or [])
+            missing_consent_form_ids = [cid for cid in required_consent_form_ids if cid not in agreed_consent_form_ids]
+            if missing_consent_form_ids:
+                conn.close()
+                return self.send_json(400, {
+                    "error": "同意書への同意が必要です",
+                    "missingConsentFormIds": missing_consent_form_ids,
+                })
+
             shift = conn.execute(
                 "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
             ).fetchone()
@@ -967,6 +1000,12 @@ class Handler(BaseHTTPRequestHandler):
             style_photo_path = save_data_url_image(body.get("stylePhoto"), "reservations", resv_id)
             if style_photo_path:
                 conn.execute("UPDATE reservations SET style_photo_path=? WHERE id=?", (style_photo_path, resv_id))
+            agreed_at = db.now_iso()
+            for consent_form_id in required_consent_form_ids:
+                conn.execute(
+                    "INSERT INTO consent_agreements (id, customer_id, reservation_id, consent_form_id, agreed_at) VALUES (?,?,?,?,?)",
+                    (db.new_id(), customer_id, resv_id, consent_form_id, agreed_at),
+                )
             conn.commit()
             created = conn.execute("SELECT * FROM reservations WHERE id=?", (resv_id,)).fetchone()
             conn.close()
@@ -1067,12 +1106,16 @@ class Handler(BaseHTTPRequestHandler):
             last_order_time = (body.get("lastOrderTime") or "").strip() or None
             if last_order_time and not TIME_RE.match(last_order_time):
                 return self.send_json(400, {"error": "最終受付時間はHH:MM形式で入力してください"})
+            consent_form_id = (body.get("consentFormId") or "").strip() or None
             conn = db.get_conn()
+            if consent_form_id and not conn.execute("SELECT 1 FROM consent_forms WHERE id=?", (consent_form_id,)).fetchone():
+                conn.close()
+                return self.send_json(400, {"error": "同意書の指定が正しくありません"})
             max_sort = conn.execute("SELECT COALESCE(MAX(sort_order), -1) m FROM menu_items").fetchone()["m"]
             mid = db.new_id()
             conn.execute(
-                "INSERT INTO menu_items (id, name, meta, price, price_is_from, student_discount, last_order_time, duration_min, sort_order) VALUES (?,?,?,?,?,?,?,?,?)",
-                (mid, name, meta, int(price), price_is_from, int(student_discount), last_order_time, int(duration_min), max_sort + 1),
+                "INSERT INTO menu_items (id, name, meta, price, price_is_from, student_discount, last_order_time, duration_min, sort_order, consent_form_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (mid, name, meta, int(price), price_is_from, int(student_discount), last_order_time, int(duration_min), max_sort + 1, consent_form_id),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM menu_items WHERE id=?", (mid,)).fetchone()
@@ -1180,9 +1223,16 @@ class Handler(BaseHTTPRequestHandler):
             if not name or not isinstance(price, (int, float)) or price < 0 or not isinstance(duration_min, (int, float)) or duration_min <= 0:
                 conn.close()
                 return self.send_json(400, {"error": "メニュー名・価格・所要時間を正しく入力してください"})
+            if "consentFormId" in body:
+                consent_form_id = (body.get("consentFormId") or "").strip() or None
+                if consent_form_id and not conn.execute("SELECT 1 FROM consent_forms WHERE id=?", (consent_form_id,)).fetchone():
+                    conn.close()
+                    return self.send_json(400, {"error": "同意書の指定が正しくありません"})
+            else:
+                consent_form_id = existing["consent_form_id"]
             conn.execute(
-                "UPDATE menu_items SET name=?, meta=?, price=?, price_is_from=?, student_discount=?, last_order_time=?, duration_min=? WHERE id=?",
-                (name, meta, int(price), price_is_from, int(student_discount), last_order_time, int(duration_min), mid),
+                "UPDATE menu_items SET name=?, meta=?, price=?, price_is_from=?, student_discount=?, last_order_time=?, duration_min=?, consent_form_id=? WHERE id=?",
+                (name, meta, int(price), price_is_from, int(student_discount), last_order_time, int(duration_min), consent_form_id, mid),
             )
             conn.commit()
             row = conn.execute("SELECT * FROM menu_items WHERE id=?", (mid,)).fetchone()
