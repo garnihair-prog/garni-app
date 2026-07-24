@@ -1,6 +1,7 @@
 /* GARNI アプリ - スタッフ管理画面フロントエンド（実APIと通信） */
 
 let currentWeekStart = null; // ISO date string (Monday)
+let CONSENT_FORMS = []; // 同意書マスタ（メニュー編集画面の割り当て用）
 
 async function api(path, options) {
   const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, options || {}));
@@ -277,6 +278,7 @@ async function selectCustomer(id) {
     </div>
     <div class="error-banner" id="karte-msg"></div>
     ${referralInfoHtml(data)}
+    ${consentInfoHtml(data)}
     <div class="karte-history">
       ${data.history.map(h => `
         <div class="kh-item">
@@ -366,6 +368,22 @@ async function setReferralRewardStatus(rewardId, status) {
   }
 }
 
+/* ---------------- 同意書の同意履歴（スタッフ側） ---------------- */
+function consentInfoHtml(data) {
+  const agreements = data.consentAgreements || [];
+  if (agreements.length === 0) return "";
+  const rows = agreements.map(a => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--gridline);font-size:12px;">
+      <div>${a.form_title}${a.reservation_date ? `（${a.reservation_date}のご予約）` : ""}</div>
+      <div style="color:var(--text-muted);font-size:11px;">同意日時 ${a.agreed_at ? a.agreed_at.replace("T", " ") : "―"}</div>
+    </div>`).join("");
+  return `
+    <div style="background:var(--page-plane);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px;">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">同意書への同意履歴</div>
+      ${rows}
+    </div>`;
+}
+
 async function uploadKartePhoto(karteId, input) {
   if (!input.files || !input.files[0]) return;
   const label = input.closest(".photo-upload-btn");
@@ -404,9 +422,16 @@ function shiftWeek(days) {
 }
 
 /* ---------------- MENU MANAGEMENT ---------------- */
+function consentFormOptionsHtml(selectedId) {
+  const noneOpt = `<option value="" ${!selectedId ? "selected" : ""}>なし</option>`;
+  const opts = CONSENT_FORMS.map(f => `<option value="${f.id}" ${f.id === selectedId ? "selected" : ""}>${f.title}</option>`).join("");
+  return noneOpt + opts;
+}
 async function loadMenus() {
   document.getElementById("menu-error").classList.remove("show");
-  const rows = await api("/api/menus");
+  const [rows, forms] = await Promise.all([api("/api/menus"), api("/api/consent-forms")]);
+  CONSENT_FORMS = forms;
+  document.getElementById("menu-new-consent").innerHTML = consentFormOptionsHtml(null);
   document.getElementById("menu-body").innerHTML = rows.map(m => `
     <tr data-id="${m.id}">
       <td><input class="cell-input" id="m-name-${m.id}" value="${m.name}"></td>
@@ -415,11 +440,12 @@ async function loadMenus() {
       <td style="text-align:center;"><input type="checkbox" id="m-from-${m.id}" ${m.price_is_from ? "checked" : ""} style="accent-color:var(--brand);" title="目安価格（〜表示）"></td>
       <td><input class="cell-input" id="m-discount-${m.id}" type="number" style="width:80px;" value="${m.student_discount || 0}"></td>
       <td><input class="cell-input" id="m-duration-${m.id}" type="number" style="width:70px;" value="${m.duration_min}">分</td>
+      <td><select class="cell-input" id="m-consent-${m.id}">${consentFormOptionsHtml(m.consent_form_id)}</select></td>
       <td style="white-space:nowrap;">
         <button class="btn-ghost" style="width:auto;display:inline;padding:6px 12px;" onclick="saveMenu('${m.id}')">保存</button>
         <button class="btn-ghost" style="width:auto;display:inline;padding:6px 12px;color:var(--warning);" onclick="deleteMenu('${m.id}')">削除</button>
       </td>
-    </tr>`).join("") || `<tr><td colspan="7" style="color:var(--text-muted);">メニューがまだありません</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="8" style="color:var(--text-muted);">メニューがまだありません</td></tr>`;
 }
 function showMenuMsg(text, isError) {
   const errBox = document.getElementById("menu-error");
@@ -439,7 +465,8 @@ async function saveMenu(id) {
     const durationEl = document.getElementById(`m-duration-${id}`);
     const fromEl = document.getElementById(`m-from-${id}`);
     const discountEl = document.getElementById(`m-discount-${id}`);
-    if (!nameEl || !metaEl || !priceEl || !durationEl || !fromEl || !discountEl) {
+    const consentEl = document.getElementById(`m-consent-${id}`);
+    if (!nameEl || !metaEl || !priceEl || !durationEl || !fromEl || !discountEl || !consentEl) {
       showMenuMsg("画面の項目が正しく読み込めていません。ページを再読み込みしてもう一度お試しください。", true);
       return;
     }
@@ -449,11 +476,12 @@ async function saveMenu(id) {
     const durationMin = parseInt(durationEl.value, 10);
     const priceIsFrom = fromEl.checked;
     const studentDiscount = parseInt(discountEl.value, 10) || 0;
+    const consentFormId = consentEl.value || null;
     if (!name || !(price >= 0) || !(durationMin > 0)) {
       showMenuMsg("メニュー名・価格・所要時間を正しく入力してください。", true);
       return;
     }
-    await api(`/api/staff/menus/${id}`, { method: "PATCH", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount }) });
+    await api(`/api/staff/menus/${id}`, { method: "PATCH", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount, consentFormId }) });
     await loadMenus();
     showMenuMsg("保存しました。", false);
   } catch (e) {
@@ -478,17 +506,19 @@ async function addMenu() {
     const durationMin = parseInt(document.getElementById("menu-new-duration").value, 10);
     const priceIsFrom = document.getElementById("menu-new-from").checked;
     const studentDiscount = parseInt(document.getElementById("menu-new-discount").value, 10) || 0;
+    const consentFormId = document.getElementById("menu-new-consent").value || null;
     if (!name || !(price >= 0) || !(durationMin > 0)) {
       showMenuMsg("メニュー名・価格・所要時間を正しく入力してください。", true);
       return;
     }
-    await api("/api/staff/menus", { method: "POST", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount }) });
+    await api("/api/staff/menus", { method: "POST", body: JSON.stringify({ name, meta, price, durationMin, priceIsFrom, studentDiscount, consentFormId }) });
     document.getElementById("menu-new-name").value = "";
     document.getElementById("menu-new-meta").value = "";
     document.getElementById("menu-new-price").value = "";
     document.getElementById("menu-new-duration").value = "";
     document.getElementById("menu-new-discount").value = "";
     document.getElementById("menu-new-from").checked = false;
+    document.getElementById("menu-new-consent").value = "";
     await loadMenus();
     showMenuMsg("追加しました。", false);
   } catch (e) {

@@ -131,15 +131,16 @@
             <label style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;">
               <input type="checkbox" id="menu-new-from" style="accent-color:var(--brand);">目安価格（〜表示）
             </label>
+            <select id="menu-new-consent" style="min-width:160px;"><option value="">同意書：なし</option></select>
             <button onclick="addMenu()">追加する</button>
           </div>
           <div class="error-banner" id="menu-error"></div>
         </div>
         <div class="panel-card">
           <h3>メニュー一覧</h3>
-          <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">「目安価格」にチェックすると、お客様向けの画面で価格が「¥6,600〜」のように表示されます（カラー・パーマなど、髪の長さ等で料金が変わるメニュー向け）。「学割引額」に金額を入れると、お客様向けの価格の下に「学割 -¥500」のように表示されます（0円または空欄なら非表示）。</p>
+          <p style="font-size:12px;color:var(--text-muted);margin:0 0 12px;">「目安価格」にチェックすると、お客様向けの画面で価格が「¥6,600〜」のように表示されます（カラー・パーマなど、髪の長さ等で料金が変わるメニュー向け）。「学割引額」に金額を入れると、お客様向けの価格の下に「学割 -¥500」のように表示されます（0円または空欄なら非表示）。「同意書」を選ぶと、お客様がそのメニューを選んでご予約する際に、該当の同意書への同意（クリック）が必須になります。</p>
           <table class="data">
-            <thead><tr><th>メニュー名</th><th>説明</th><th>価格</th><th>目安</th><th>学割引額</th><th>所要時間</th><th></th></tr></thead>
+            <thead><tr><th>メニュー名</th><th>説明</th><th>価格</th><th>目安</th><th>学割引額</th><th>所要時間</th><th>同意書</th><th></th></tr></thead>
             <tbody id="menu-body"></tbody>
           </table>
         </div>
