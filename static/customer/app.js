@@ -69,8 +69,54 @@ function renderMenuList() {
   document.getElementById("menu-list").innerHTML = MENUS.map(m => menuCardHtml(m, true)).join("");
   document.getElementById("home-menu-list").innerHTML = MENUS.slice(0, 3).map(m => menuCardHtml(m, false)).join("");
 }
+// 薬剤の関係上、同時（同じ方）に施術できないメニューの組み合わせ。
+// ブリーチはパーマ・縮毛矯正と同時にはご予約いただけない。
+const MENU_CONFLICT_GROUPS = [
+  [["ブリーチ"], ["パーマ", "縮毛矯正"]],
+];
+
+// menuIds（同一人物が選択したメニューIDのSet/配列）に、同時施術できない組み合わせが
+// 含まれていればエラーメッセージを返す。問題なければ null。
+function menuConflictMessage(menuIds) {
+  const names = new Set([...menuIds].map(id => {
+    const m = MENUS.find(m => m.id === id);
+    return m ? m.name : null;
+  }));
+  for (const [groupA, groupB] of MENU_CONFLICT_GROUPS) {
+    const aHit = groupA.filter(n => names.has(n));
+    const bHit = groupB.filter(n => names.has(n));
+    if (aHit.length && bHit.length) {
+      return `${aHit.join("・")}は${bHit.join("・")}と同時にはご予約いただけません`;
+    }
+  }
+  return null;
+}
+
+function showMenuError(msg) {
+  const errBox = document.getElementById("menu-error");
+  errBox.textContent = msg;
+  errBox.classList.add("show");
+}
+
+function clearMenuError() {
+  document.getElementById("menu-error").classList.remove("show");
+}
+
 function toggleMenu(id) {
-  if (selectedMenus.has(id)) selectedMenus.delete(id); else selectedMenus.add(id);
+  if (selectedMenus.has(id)) {
+    selectedMenus.delete(id);
+    clearMenuError();
+  } else {
+    selectedMenus.add(id);
+    const msg = menuConflictMessage(selectedMenus);
+    if (msg) {
+      selectedMenus.delete(id);
+      showMenuError(msg);
+      renderMenuList();
+      return;
+    }
+    clearMenuError();
+  }
   renderMenuList();
 }
 
@@ -132,7 +178,20 @@ function updateCompanionName(id, value) {
 function toggleCompanionMenu(id, menuId) {
   const c = companions.find(c => c.id === id);
   if (!c) return;
-  if (c.menuIds.has(menuId)) c.menuIds.delete(menuId); else c.menuIds.add(menuId);
+  if (c.menuIds.has(menuId)) {
+    c.menuIds.delete(menuId);
+    clearMenuError();
+  } else {
+    c.menuIds.add(menuId);
+    const msg = menuConflictMessage(c.menuIds);
+    if (msg) {
+      c.menuIds.delete(menuId);
+      showMenuError(msg);
+      renderCompanions();
+      return;
+    }
+    clearMenuError();
+  }
   renderCompanions();
 }
 
