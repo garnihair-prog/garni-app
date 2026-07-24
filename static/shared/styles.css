@@ -83,6 +83,19 @@ header.top a.switch-link { font-size: 12.5px; color: var(--brand-dark); text-dec
 .price-col { text-align: right; }
 .mdiscount { font-size: 10.5px; font-weight: 700; color: var(--brand-dark); background: var(--brand-tint); border-radius: 6px; padding: 1px 7px; margin-top: 4px; display: inline-block; }
 
+/* お連れ様（複数人でのご来店）関連 */
+.companion-card { background: #fbfaf6; border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
+.companion-card-head { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.companion-name-input { flex: 1; min-width: 0; border-radius: 10px; border: 1px solid var(--border); padding: 9px 10px; font-size: 13px; font-family: inherit; background: #fff; }
+.companion-remove-btn { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border); background: #fff; color: var(--text-muted); font-size: 13px; line-height: 1; cursor: pointer; }
+.companion-menu-list { display: flex; flex-direction: column; gap: 1px; }
+.companion-menu-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 5px 2px; cursor: pointer; }
+.companion-menu-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--brand); flex: 0 0 auto; margin: 0; }
+.companion-menu-name { flex: 1; }
+.companion-menu-price { color: var(--brand-dark); font-weight: 700; font-variant-numeric: tabular-nums; }
+.add-companion-btn { width: 100%; background: #fff; color: var(--brand-dark); border: 1px solid var(--brand); border-radius: 12px; padding: 11px; font-size: 13px; font-weight: 700; cursor: pointer; margin-bottom: 18px; }
+.companion-tag { font-size: 10.5px; font-weight: 700; color: var(--brand-dark); background: var(--brand-tint); border-radius: 6px; padding: 1px 7px; margin-top: 3px; display: inline-block; cursor: default; }
+
 .step-dots { display: flex; gap: 6px; justify-content: center; margin: 4px 0 18px; }
 .step-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--gridline); }
 .step-dots span.on { background: var(--brand); }
