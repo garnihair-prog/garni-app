@@ -189,7 +189,7 @@ function escapeHtml(str) {
 function companionSummaryHtml(r) {
   const comps = r.companions || [];
   if (!comps.length) return "";
-  const title = comps.map(c => `${c.name}様：${c.menuNames}（¥${c.price.toLocaleString()}）`).join("\n");
+  const title = comps.map(c => `${c.name}様${c.age != null ? "（" + c.age + "歳）" : ""}：${c.menuNames}（¥${c.price.toLocaleString()}）`).join("\n");
   return `<div class="companion-tag" title="${escapeHtml(title)}">＋お連れ様${comps.length}名</div>`;
 }
 
