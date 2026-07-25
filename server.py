@@ -129,6 +129,26 @@ def menu_conflict_message(menu_rows):
     return None
 
 
+# 薬剤を使うメニューは15歳以下不可（安全上の理由）。対象は主要メニューのみで、
+# 「パーマ、カーラー前シャンプー」等の付帯メニュー（薬剤を使わない）は対象外。
+AGE_RESTRICTED_MENU_NAMES = {"白髪 カラー", "お洒落 カラー", "パーマ", "縮毛矯正", "ブリーチ"}
+AGE_RESTRICTION_MIN_AGE = 16  # この歳未満（15歳以下）は不可
+
+
+def age_requirement_message(menu_rows, age):
+    """menu_rows（同一人物が選択したメニュー行）に年齢制限メニューが含まれる場合、
+    年齢が未入力または15歳以下ならエラーメッセージを返す。問題なければ None。"""
+    names = sorted({r["name"] for r in menu_rows if r["name"] in AGE_RESTRICTED_MENU_NAMES})
+    if not names:
+        return None
+    label = "・".join(names)
+    if age is None:
+        return f"{label}をご予約の場合は、年齢の入力が必要です"
+    if age < AGE_RESTRICTION_MIN_AGE:
+        return f"{label}は15歳以下の方はご予約いただけません"
+    return None
+
+
 def row_to_dict(row):
     d = {k: row[k] for k in row.keys()}
     if "companions" in d:
@@ -947,6 +967,10 @@ class Handler(BaseHTTPRequestHandler):
             if conflict_msg:
                 conn.close()
                 return self.send_json(400, {"error": conflict_msg})
+            age_msg = age_requirement_message(menu_rows, age)
+            if age_msg:
+                conn.close()
+                return self.send_json(400, {"error": age_msg})
             menu_names = "・".join(r["name"] for r in menu_rows)
             required_consent_form_id_set = {r["consent_form_id"] for r in menu_rows if r["consent_form_id"]}
 
@@ -971,9 +995,18 @@ class Handler(BaseHTTPRequestHandler):
                     if comp_conflict_msg:
                         conn.close()
                         return self.send_json(400, {"error": f"{comp_name}様：{comp_conflict_msg}"})
+                    comp_age_raw = comp.get("age")
+                    comp_age = None
+                    if isinstance(comp_age_raw, (int, float)) and 0 < comp_age_raw < 120:
+                        comp_age = int(comp_age_raw)
+                    comp_age_msg = age_requirement_message(comp_rows, comp_age)
+                    if comp_age_msg:
+                        conn.close()
+                        return self.send_json(400, {"error": f"{comp_name}様：{comp_age_msg}"})
                     comp_menu_names = "・".join(r["name"] for r in comp_rows)
                     companions_out.append({
                         "name": comp_name,
+                        "age": comp_age,
                         "menuNames": comp_menu_names,
                         "price": comp_price,
                         "durationMin": comp_duration,

@@ -399,6 +399,12 @@ def init_db():
             "VALUES ('m-bleach', 'ブリーチ', 'ハイライト・グラデーション等応相談', 8800, 500, '16:00', 90, ?, 'cf-color')",
             (bleach_sort_order,),
         )
+    # 「学生カット」の説明文に、対象条件（一人で座れる方から）の注意書きを追記する。
+    # NOT LIKE 条件があるため、既に追記済みの場合は再実行しても重複しない。
+    conn.execute(
+        "UPDATE menu_items SET meta = COALESCE(meta || '／', '') || '一人で座れる方から承ります' "
+        "WHERE name='学生カット' AND (meta IS NULL OR meta NOT LIKE '%座れる%')"
+    )
     settings_cols = {row["name"] for row in conn.execute("PRAGMA table_info(salon_settings)").fetchall()}
     if "combo_perm_color_last_order" not in settings_cols:
         conn.execute("ALTER TABLE salon_settings ADD COLUMN combo_perm_color_last_order TEXT")
