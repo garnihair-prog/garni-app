@@ -92,6 +92,24 @@ function menuConflictMessage(menuIds) {
   return null;
 }
 
+// 薬剤を使うメニューは15歳以下不可（安全上の理由）。対象は主要メニューのみで、
+// 付帯メニュー（薬剤を使わないシャンプー・カットのみのもの）は対象外。
+const AGE_RESTRICTED_MENU_NAMES = new Set(["白髪 カラー", "お洒落 カラー", "パーマ", "縮毛矯正", "ブリーチ"]);
+const AGE_RESTRICTION_MIN_AGE = 16; // この歳未満（15歳以下）は不可
+
+// menuIds（同一人物が選択したメニューIDのSet/配列）に年齢制限メニューが含まれる場合、
+// age（数値。未入力ならnull）が未入力または15歳以下ならエラーメッセージを返す。問題なければ null。
+function ageRequirementMessage(menuIds, age) {
+  const names = [...new Set([...menuIds]
+    .map(id => (MENUS.find(m => m.id === id) || {}).name)
+    .filter(name => AGE_RESTRICTED_MENU_NAMES.has(name)))];
+  if (names.length === 0) return null;
+  const label = names.join("・");
+  if (age == null || Number.isNaN(age)) return `${label}をご予約の場合は、年齢の入力が必要です`;
+  if (age < AGE_RESTRICTION_MIN_AGE) return `${label}は15歳以下の方はご予約いただけません`;
+  return null;
+}
+
 function showMenuError(msg) {
   const errBox = document.getElementById("menu-error");
   errBox.textContent = msg;
@@ -146,6 +164,7 @@ function companionCardHtml(comp) {
     <div class="companion-card" id="companion-${comp.id}">
       <div class="companion-card-head">
         <input type="text" class="companion-name-input" placeholder="お名前（例：花子ちゃん）" value="${escapeHtml(comp.name)}" oninput="updateCompanionName('${comp.id}', this.value)">
+        <input type="number" class="companion-age-input" placeholder="年齢" min="1" max="119" value="${comp.age === "" || comp.age == null ? "" : escapeHtml(comp.age)}" oninput="updateCompanionAge('${comp.id}', this.value)">
         <button type="button" class="companion-remove-btn" onclick="removeCompanion('${comp.id}')" aria-label="お連れ様を削除">✕</button>
       </div>
       <div class="companion-menu-list">
@@ -160,7 +179,7 @@ function renderCompanions() {
 
 function addCompanion() {
   companionSeq++;
-  companions.push({ id: "comp" + companionSeq, name: "", menuIds: new Set() });
+  companions.push({ id: "comp" + companionSeq, name: "", age: "", menuIds: new Set() });
   renderCompanions();
 }
 
@@ -172,6 +191,12 @@ function removeCompanion(id) {
 function updateCompanionName(id, value) {
   const c = companions.find(c => c.id === id);
   if (c) c.name = value;
+  // 入力中に再描画するとカーソル位置・フォーカスが失われるため、ここでは状態更新のみ行う
+}
+
+function updateCompanionAge(id, value) {
+  const c = companions.find(c => c.id === id);
+  if (c) c.age = value;
   // 入力中に再描画するとカーソル位置・フォーカスが失われるため、ここでは状態更新のみ行う
 }
 
@@ -333,6 +358,26 @@ function goConfirm() {
   }
   errBox.classList.remove("show");
 
+  // 年齢制限メニュー（薬剤を使うメニュー）が含まれる場合、本人・お連れ様それぞれの
+  // 年齢を確認する（未入力または15歳以下ならここで止める）。
+  const ageInputVal = document.getElementById("in-age").value;
+  const primaryAge = ageInputVal ? parseInt(ageInputVal, 10) : null;
+  const primaryAgeMsg = ageRequirementMessage(selectedMenus, primaryAge);
+  if (primaryAgeMsg) {
+    errBox.textContent = primaryAgeMsg;
+    errBox.classList.add("show");
+    return;
+  }
+  for (const c of validCompanions()) {
+    const cAge = (c.age !== "" && c.age != null) ? parseInt(c.age, 10) : null;
+    const cAgeMsg = ageRequirementMessage(c.menuIds, cAge);
+    if (cAgeMsg) {
+      errBox.textContent = `${c.name.trim()}様：${cAgeMsg}`;
+      errBox.classList.add("show");
+      return;
+    }
+  }
+
   // 選択したメニューに紐づく同意書（カラー・ブリーチ用、パーマ・縮毛矯正用など）を、
   // 選択メニューの並び順で重複なく集める。パーマ＋カラーの同時予約など、複数の同意書が
   // 必要な場合は、1つずつ順番に確認・同意していただく。お連れ様が選択したメニューも
@@ -490,7 +535,11 @@ async function finishBooking() {
         stylePhoto: stylePhotoDataUrl,
         referralCode: document.getElementById("in-referral-code").value.trim(),
         agreedConsentFormIds: consentAgreedFormIds,
-        companions: validCompanions().map(c => ({ name: c.name.trim(), menuIds: [...c.menuIds] })),
+        companions: validCompanions().map(c => ({
+          name: c.name.trim(),
+          age: (c.age !== "" && c.age != null) ? parseInt(c.age, 10) : null,
+          menuIds: [...c.menuIds],
+        })),
       }),
     });
     stylePhotoDataUrl = null;
