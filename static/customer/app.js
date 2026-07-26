@@ -383,10 +383,18 @@ function goConfirm() {
   // 必要な場合は、1つずつ順番に確認・同意していただく。お連れ様が選択したメニューも
   // 対象に含める（保護者の同意で、ご一緒のお連れ様分もまとめて同意したものとして扱う）。
   const allMenuIdsForConsent = [...selectedMenus, ...validCompanions().flatMap(c => [...c.menuIds])];
-  const requiredFormIds = allMenuIdsForConsent
+  const selectedMenuRowsForConsent = allMenuIdsForConsent
     .map(id => MENUS.find(m => m.id === id))
-    .filter(m => m && m.consent_form_id)
+    .filter(Boolean);
+  const requiredFormIds = selectedMenuRowsForConsent
+    .filter(m => m.consent_form_id)
     .map(m => m.consent_form_id);
+  // カラー・ブリーチ同意書（cf-color）が必要な場合は、パッチテスト省略の同意書もあわせて
+  // ご確認いただく（メニュー名ではなくconsent_form_idで判定するため、スタッフによる
+  // メニュー名変更の影響を受けない）。
+  if (selectedMenuRowsForConsent.some(m => m.consent_form_id === "cf-color")) {
+    requiredFormIds.push("cf-patch-test-omit");
+  }
   const uniqueFormIds = [...new Set(requiredFormIds)];
   consentQueue = uniqueFormIds.map(id => CONSENT_FORMS.find(f => f.id === id)).filter(Boolean);
   consentIndex = 0;
@@ -453,7 +461,7 @@ function renderDisclaimer() {
     <p><strong>ご予約・キャンセルについて</strong><br>
     ご予約の変更・キャンセルはお早めにご連絡ください。土日祝のご予約について、前日のキャンセルは予約金額の${feePercent}%、当日キャンセルは${feePercentFull}%のキャンセル料を申し受ける場合がございます。無断キャンセルの場合は、平日・土日祝を問わず、毎回予約金額の${feePercentFull}%のキャンセル料を申し受けます。</p>
     <p><strong>その他</strong><br>
-    アレルギー体質やパッチテストが必要な薬剤を使用される場合は、事前に必ずお申し出ください。天災・交通事情など、やむを得ない事情により予約時間の変更をお願いする場合がございます。施術後のお写真は、お客様の許可をいただいた場合に限り、当店の広告・SNS等に使用させていただくことがあります。</p>
+    天災・交通事情など、やむを得ない事情により予約時間の変更をお願いする場合がございます。施術後のお写真は、お客様の許可をいただいた場合に限り、当店の広告・SNS等に使用させていただくことがあります。</p>
   `;
 }
 
