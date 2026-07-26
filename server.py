@@ -149,6 +149,20 @@ def age_requirement_message(menu_rows, age):
     return None
 
 
+# パッチテストを省略して施術する場合の追加同意書。カラー・ブリーチ同意書（cf-color）が
+# 必要なメニューを選んだ方には、この同意書もあわせてご確認いただく。
+# メニュー名ではなく consent_form_id で判定することで、スタッフによるメニュー名変更の
+# 影響を受けないようにしている（メニュー名は現場で変更されることがあるため）。
+PATCH_TEST_OMIT_CONSENT_FORM_ID = "cf-patch-test-omit"
+
+
+def add_patch_test_omit_consent(consent_form_id_set, menu_rows):
+    """menu_rows にカラー・ブリーチ同意書（cf-color）対象のメニューが含まれる場合、
+    パッチテスト省略同意書もあわせて必要な同意書の集合に追加する。"""
+    if any(r["consent_form_id"] == "cf-color" for r in menu_rows):
+        consent_form_id_set.add(PATCH_TEST_OMIT_CONSENT_FORM_ID)
+
+
 def row_to_dict(row):
     d = {k: row[k] for k in row.keys()}
     if "companions" in d:
@@ -973,6 +987,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": age_msg})
             menu_names = "・".join(r["name"] for r in menu_rows)
             required_consent_form_id_set = {r["consent_form_id"] for r in menu_rows if r["consent_form_id"]}
+            add_patch_test_omit_consent(required_consent_form_id_set, menu_rows)
 
             # お連れ様（複数人でのご来店、例：お子様連れ・ご家族一緒のご予約）の処理。
             # お連れ様はお名前のみを記録する軽量な付随情報で、独立した顧客・カルテレコードは作らない。
@@ -1015,6 +1030,7 @@ class Handler(BaseHTTPRequestHandler):
                     total_price += comp_price
                     all_menu_ids.extend(comp_menu_ids)
                     required_consent_form_id_set.update(r["consent_form_id"] for r in comp_rows if r["consent_form_id"])
+                    add_patch_test_omit_consent(required_consent_form_id_set, comp_rows)
 
             # 選択したメニューに紐づく同意書（カラー・ブリーチ用、パーマ・縮毛矯正用など）への同意を検証する。
             # 必須の同意書IDは、お客様が送信した agreedConsentFormIds ではなく、サーバー側で

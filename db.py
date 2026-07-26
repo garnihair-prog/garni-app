@@ -288,6 +288,21 @@ _PERM_CONSENT_ARTICLES = [
 PERM_CONSENT_HTML = _consent_html(_PERM_CONSENT_INTRO, _PERM_CONSENT_ARTICLES)
 
 
+_PATCH_TEST_OMIT_BODY = (
+    "私は、施術を受けるにあたり、パッチテストの実施の省略を希望いたします。"
+    "当店スタッフから、パッチテストを省略した場合、かぶれ（頭・髪の生え際・顔・首筋などに、"
+    "かゆみ・はれ・赤み・ブツブツなどの症状・フェイスラインのただれ等がでること）や"
+    "重篤なアレルギー反応を発症する場合もある等、カラーに使用する薬剤やパッチテストに"
+    "関する説明を受けており、カラーの施術を受けるにあたり、ほかに当店スタッフに"
+    "聞いておきたいことや、相談をしたいこと、疑問点等はありません。"
+)
+
+PATCH_TEST_OMIT_CONSENT_HTML = (
+    "<p>（パッチテスト実施の省略を希望されたお客様）</p>"
+    f"<p>{_PATCH_TEST_OMIT_BODY}</p>"
+)
+
+
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -384,6 +399,16 @@ def init_db():
     has_consent_forms = conn.execute("SELECT COUNT(*) c FROM consent_forms").fetchone()["c"] > 0
     if not has_consent_forms:
         seed_consent_forms(conn)
+    # 「パッチテスト省略の確認書 兼 同意書」は後から追加した同意書のため、
+    # 既に同意書マスタが投入済みの既存DBには個別に追加する（新規インストールは上のseed_consent_formsで投入済み）。
+    has_patch_test_omit_form = conn.execute(
+        "SELECT COUNT(*) c FROM consent_forms WHERE id='cf-patch-test-omit'"
+    ).fetchone()["c"] > 0
+    if not has_patch_test_omit_form:
+        conn.execute(
+            "INSERT INTO consent_forms (id, title, body_html, sort_order) VALUES (?,?,?,?)",
+            ("cf-patch-test-omit", "パッチテスト省略の確認書 兼 同意書", PATCH_TEST_OMIT_CONSENT_HTML, 2),
+        )
     # 既存DBに「ブリーチ」メニューが無ければ、カラーの直後に追加する（旧バージョンからの移行）。
     # ブリーチはパーマ・縮毛矯正と薬剤の関係で同日施術ができないため、同意書はカラーと同じものを割り当てる。
     has_bleach = conn.execute("SELECT COUNT(*) c FROM menu_items WHERE name='ブリーチ'").fetchone()["c"] > 0
@@ -432,6 +457,7 @@ def seed_consent_forms(conn):
     forms = [
         ("cf-color", "ブリーチ・カラー施術同意書", COLOR_CONSENT_HTML, 0),
         ("cf-perm", "パーマ・縮毛矯正施術同意書", PERM_CONSENT_HTML, 1),
+        ("cf-patch-test-omit", "パッチテスト省略の確認書 兼 同意書", PATCH_TEST_OMIT_CONSENT_HTML, 2),
     ]
     conn.executemany(
         "INSERT INTO consent_forms (id, title, body_html, sort_order) VALUES (?,?,?,?)",
