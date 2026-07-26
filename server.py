@@ -129,16 +129,20 @@ def menu_conflict_message(menu_rows):
     return None
 
 
-# 薬剤を使うメニューは15歳以下不可（安全上の理由）。対象は主要メニューのみで、
+# 薬剤を使うメニューは15歳以下不可（安全上の理由）。対象は、カラー・ブリーチ同意書（cf-color）と
+# パーマ・縮毛矯正同意書（cf-perm）が必要なメニュー＝主要な薬剤施術メニューで、
 # 「パーマ、カーラー前シャンプー」等の付帯メニュー（薬剤を使わない）は対象外。
-AGE_RESTRICTED_MENU_NAMES = {"白髪 カラー", "お洒落 カラー", "パーマ", "縮毛矯正", "ブリーチ"}
+# メニュー名ではなくconsent_form_idで判定することで、スタッフによるメニュー名変更の影響を受けない
+# （メニュー名の文字列一致で判定していた際、全角スペースを含むメニュー名がコード側の半角スペースと
+# 一致せず、年齢制限が発動しない不具合があったため）。
+AGE_RESTRICTED_CONSENT_FORM_IDS = {"cf-color", "cf-perm"}
 AGE_RESTRICTION_MIN_AGE = 16  # この歳未満（15歳以下）は不可
 
 
 def age_requirement_message(menu_rows, age):
     """menu_rows（同一人物が選択したメニュー行）に年齢制限メニューが含まれる場合、
     年齢が未入力または15歳以下ならエラーメッセージを返す。問題なければ None。"""
-    names = sorted({r["name"] for r in menu_rows if r["name"] in AGE_RESTRICTED_MENU_NAMES})
+    names = sorted({r["name"] for r in menu_rows if r["consent_form_id"] in AGE_RESTRICTED_CONSENT_FORM_IDS})
     if not names:
         return None
     label = "・".join(names)
