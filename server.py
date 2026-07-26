@@ -1148,6 +1148,169 @@ class Handler(BaseHTTPRequestHandler):
             created_dict["referralApplied"] = referral_applied
             return self.send_json(201, created_dict)
 
+        if path == "/api/staff/reservations":
+            # 電話でのご予約など、スタッフがお客様に代わって手動で予約を登録するためのエンドポイント。
+            # お客様向けのPOST /api/reservationsとほぼ同じ検証（メニュー競合・年齢制限・営業時間・
+            # 予約重複など）を行うが、以下の点が異なる：
+            # ・同意書への同意チェックは行わない（電話予約は来店時に紙の同意書へサインいただく想定）
+            # ・オーナー通知メールは送信しない（スタッフ自身が入力しているため二重通知になる）
+            if not self.require_staff():
+                return
+            required = ["date", "time", "stylistId", "menuIds", "customerName", "customerPhone"]
+            if not all(k in body and body[k] for k in required):
+                return self.send_json(400, {"error": "入力が不足しています"})
+            date, time_, stylist_id = body["date"], body["time"], body["stylistId"]
+            menu_ids = body["menuIds"]
+            name, phone = body["customerName"].strip(), re.sub(r"\D", "", body["customerPhone"])
+            note = body.get("note", "")
+            gender = body.get("customerGender") or None
+            if gender not in ("男性", "女性"):
+                gender = None
+            age_raw = body.get("customerAge")
+            age = None
+            if isinstance(age_raw, (int, float)) and 0 < age_raw < 120:
+                age = int(age_raw)
+
+            conn = db.get_conn()
+            settings = get_settings(conn)
+            if weekday_js(date) in closed_weekdays_set(settings):
+                conn.close()
+                return self.send_json(409, {"error": "その日は定休日です"})
+            if date in closed_dates_set(conn):
+                conn.close()
+                return self.send_json(409, {"error": "その日は臨時休業日です"})
+            menu_rows, total_duration, total_price = menu_duration_total(conn, menu_ids)
+            if not menu_rows:
+                conn.close()
+                return self.send_json(400, {"error": "メニューを選択してください"})
+            conflict_msg = menu_conflict_message(menu_rows)
+            if conflict_msg:
+                conn.close()
+                return self.send_json(400, {"error": conflict_msg})
+            age_msg = age_requirement_message(menu_rows, age)
+            if age_msg:
+                conn.close()
+                return self.send_json(400, {"error": age_msg})
+            menu_names = "・".join(r["name"] for r in menu_rows)
+
+            # お連れ様（複数人でのご来店）の処理。オンライン予約と同じルールで検証する。
+            all_menu_ids = list(menu_ids)
+            companions_out = []
+            companions_in = body.get("companions") or []
+            if isinstance(companions_in, list):
+                for comp in companions_in[:MAX_COMPANIONS]:
+                    if not isinstance(comp, dict):
+                        continue
+                    comp_name = str(comp.get("name") or "").strip()
+                    comp_menu_ids = comp.get("menuIds")
+                    if not comp_name or not isinstance(comp_menu_ids, list) or not comp_menu_ids:
+                        continue
+                    comp_rows, comp_duration, comp_price = menu_duration_total(conn, comp_menu_ids)
+                    if not comp_rows:
+                        continue
+                    comp_conflict_msg = menu_conflict_message(comp_rows)
+                    if comp_conflict_msg:
+                        conn.close()
+                        return self.send_json(400, {"error": f"{comp_name}様：{comp_conflict_msg}"})
+                    comp_age_raw = comp.get("age")
+                    comp_age = None
+                    if isinstance(comp_age_raw, (int, float)) and 0 < comp_age_raw < 120:
+                        comp_age = int(comp_age_raw)
+                    comp_age_msg = age_requirement_message(comp_rows, comp_age)
+                    if comp_age_msg:
+                        conn.close()
+                        return self.send_json(400, {"error": f"{comp_name}様：{comp_age_msg}"})
+                    comp_menu_names = "・".join(r["name"] for r in comp_rows)
+                    companions_out.append({
+                        "name": comp_name,
+                        "age": comp_age,
+                        "menuNames": comp_menu_names,
+                        "price": comp_price,
+                        "durationMin": comp_duration,
+                    })
+                    total_duration += comp_duration
+                    total_price += comp_price
+                    all_menu_ids.extend(comp_menu_ids)
+
+            shift = conn.execute(
+                "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
+            ).fetchone()
+            if shift and shift["label"] == "off":
+                conn.close()
+                return self.send_json(409, {"error": "指定のスタイリストは休みの日です"})
+            business_range = business_hours_range(settings)
+            shift_range = parse_shift_range(shift["label"]) if shift else business_range
+            if shift_range is None:
+                shift_range = business_range
+            open_min, close_min = shift_range
+            open_min = max(open_min, business_range[0])
+            close_min = min(close_min, business_range[1])
+            req_start = time_to_min(time_)
+            req_end = req_start + total_duration
+            if req_start < open_min or req_end > close_min:
+                conn.close()
+                return self.send_json(409, {"error": f"選択したメニューの所要時間（{total_duration}分）だと営業時間内に収まりません"})
+            last_order_min = effective_last_order_min(conn, settings, all_menu_ids)
+            if last_order_min is not None and req_start > last_order_min:
+                conn.close()
+                return self.send_json(409, {"error": f"選択したメニューの最終受付時間（{min_to_time(last_order_min)}）を過ぎています"})
+            # 「本日のご予約は現在時刻からX分後以降」の制限は、お客様がオンラインで即時予約する場合の
+            # ものなので、スタッフが電話内容を確認しながら入力する手動登録では適用しない。
+
+            existing = conn.execute(
+                "SELECT time, duration_min FROM reservations WHERE date=? AND stylist_id=? AND status NOT IN ('cancel', 'no_show')",
+                (date, stylist_id),
+            ).fetchall()
+            for r in existing:
+                bs = time_to_min(r["time"])
+                be = bs + r["duration_min"]
+                if ranges_overlap(req_start, req_end, bs, be):
+                    conn.close()
+                    return self.send_json(409, {"error": "この時間帯はすでに予約が入っています"})
+
+            cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
+            referral_applied = False
+            if cust:
+                customer_id = cust["id"]
+                if cust["name"] != name:
+                    conn.execute("UPDATE customers SET name=? WHERE id=?", (name, customer_id))
+                if gender is not None:
+                    conn.execute("UPDATE customers SET gender=? WHERE id=?", (gender, customer_id))
+                if age is not None:
+                    conn.execute("UPDATE customers SET age=? WHERE id=?", (age, customer_id))
+                if cust["archived_at"] is not None:
+                    conn.execute("UPDATE customers SET archived_at=NULL WHERE id=?", (customer_id,))
+            else:
+                customer_id = db.new_id()
+                referral_code = (body.get("referralCode") or "").strip().upper()
+                referred_by = None
+                if referral_code:
+                    referrer = conn.execute(
+                        "SELECT id FROM customers WHERE referral_code=?", (referral_code,)
+                    ).fetchone()
+                    if referrer:
+                        referred_by = referrer["id"]
+                        referral_applied = True
+                conn.execute(
+                    "INSERT INTO customers (id, name, phone, rank, points, gender, age, referred_by_customer_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (customer_id, name, phone, "新規", 0, gender, age, referred_by, db.now_iso()),
+                )
+
+            companions_json = json.dumps(companions_out, ensure_ascii=False) if companions_out else None
+            resv_id = db.new_id()
+            conn.execute(
+                """INSERT INTO reservations
+                   (id, customer_id, customer_name, customer_phone, date, time, stylist_id, menu_names, total_price, duration_min, note, status, companions, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (resv_id, customer_id, name, phone, date, time_, stylist_id, menu_names, total_price, total_duration, note, "wait", companions_json, db.now_iso()),
+            )
+            conn.commit()
+            created = conn.execute("SELECT * FROM reservations WHERE id=?", (resv_id,)).fetchone()
+            conn.close()
+            created_dict = row_to_dict(created)
+            created_dict["referralApplied"] = referral_applied
+            return self.send_json(201, created_dict)
+
         if path == "/api/staff/shifts":
             if not self.require_staff():
                 return
