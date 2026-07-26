@@ -92,17 +92,22 @@ function menuConflictMessage(menuIds) {
   return null;
 }
 
-// 薬剤を使うメニューは15歳以下不可（安全上の理由）。対象は主要メニューのみで、
-// 付帯メニュー（薬剤を使わないシャンプー・カットのみのもの）は対象外。
-const AGE_RESTRICTED_MENU_NAMES = new Set(["白髪 カラー", "お洒落 カラー", "パーマ", "縮毛矯正", "ブリーチ"]);
+// 薬剤を使うメニューは15歳以下不可（安全上の理由）。対象は、カラー・ブリーチ同意書（cf-color）と
+// パーマ・縮毛矯正同意書（cf-perm）が必要なメニュー＝主要な薬剤施術メニューで、付帯メニュー
+// （薬剤を使わないシャンプー・カットのみのもの）は対象外。
+// メニュー名ではなくconsent_form_idで判定することで、スタッフによるメニュー名変更の影響を受けない
+// （メニュー名の文字列一致で判定していた際、全角スペースを含むメニュー名がコード側の半角スペースと
+// 一致せず、年齢制限が発動しない不具合があったため）。
+const AGE_RESTRICTED_CONSENT_FORM_IDS = new Set(["cf-color", "cf-perm"]);
 const AGE_RESTRICTION_MIN_AGE = 16; // この歳未満（15歳以下）は不可
 
 // menuIds（同一人物が選択したメニューIDのSet/配列）に年齢制限メニューが含まれる場合、
 // age（数値。未入力ならnull）が未入力または15歳以下ならエラーメッセージを返す。問題なければ null。
 function ageRequirementMessage(menuIds, age) {
   const names = [...new Set([...menuIds]
-    .map(id => (MENUS.find(m => m.id === id) || {}).name)
-    .filter(name => AGE_RESTRICTED_MENU_NAMES.has(name)))];
+    .map(id => MENUS.find(m => m.id === id))
+    .filter(m => m && AGE_RESTRICTED_CONSENT_FORM_IDS.has(m.consent_form_id))
+    .map(m => m.name))];
   if (names.length === 0) return null;
   const label = names.join("・");
   if (age == null || Number.isNaN(age)) return `${label}をご予約の場合は、年齢の入力が必要です`;
