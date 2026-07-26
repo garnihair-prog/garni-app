@@ -917,8 +917,15 @@ class Handler(BaseHTTPRequestHandler):
                 ).fetchone()
                 sales.append({"date": wd, "value": row["v"]})
             month_first, _ = month_range(d.strftime("%Y-%m"))
+            # 「今月の新規顧客」は、今月初めて登録された顧客のうち、少なくとも1件は
+            # キャンセル・無断キャンセル以外の予約（実際に成立した予約）を持つ人のみを数える。
+            # 初回予約がキャンセルされただけの人は「新規顧客」に含めない
+            # （他の集計と同様、status NOT IN ('cancel', 'no_show') で判定する）。
             new_cust = conn.execute(
-                "SELECT COUNT(*) c FROM customers WHERE created_at >= ?", (month_first,)
+                "SELECT COUNT(DISTINCT c.id) c FROM customers c "
+                "JOIN reservations r ON r.customer_id = c.id "
+                "WHERE c.created_at >= ? AND r.status NOT IN ('cancel', 'no_show')",
+                (month_first,),
             ).fetchone()["c"]
             conn.close()
             active = [r for r in today_resv if r["status"] != "cancel"]
