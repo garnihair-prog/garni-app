@@ -83,6 +83,59 @@
 
       <div class="staff-panel" id="s-reserve">
         <div class="panel-card">
+          <h3>電話予約を登録</h3>
+          <p style="font-size:11.5px;color:var(--text-muted);margin-top:-8px;">お電話でご予約されたお客様の予約を、代わりに登録できます。同意書のご案内は来店時に紙で行ってください。</p>
+          <div class="error-banner" id="nr-error"></div>
+          <div class="field-row">
+            <div class="field">
+              <label>電話番号</label>
+              <input type="tel" id="nr-phone" placeholder="09012345678" onblur="lookupNRCustomerByPhone()">
+            </div>
+            <div class="field">
+              <label>お名前</label>
+              <input type="text" id="nr-name" placeholder="山田 花子">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>性別（任意）</label>
+              <select id="nr-gender"><option value="">未選択</option><option value="男性">男性</option><option value="女性">女性</option></select>
+            </div>
+            <div class="field">
+              <label>年齢（任意・薬剤メニュー選択時は必須）</label>
+              <input type="number" id="nr-age" placeholder="例：34" min="1" max="119">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>ご来店日</label>
+              <input type="date" id="nr-date" onchange="onNRContextChanged()">
+            </div>
+            <div class="field">
+              <label>担当スタイリスト</label>
+              <select id="nr-stylist" onchange="onNRContextChanged()"></select>
+            </div>
+          </div>
+          <div class="field">
+            <label>メニュー</label>
+            <div id="nr-menu-list"></div>
+          </div>
+          <div class="field">
+            <label>お連れ様（同伴者。任意）</label>
+            <div id="nr-companion-list"></div>
+            <button type="button" class="btn-ghost" style="width:auto;display:inline;" onclick="addNRCompanion()">＋ お連れ様を追加</button>
+          </div>
+          <div class="field">
+            <label>お時間</label>
+            <select id="nr-time"><option value="">先にご来店日・スタイリスト・メニューを選択してください</option></select>
+          </div>
+          <div class="field">
+            <label>備考（任意）</label>
+            <textarea id="nr-note" placeholder="電話予約の内容などメモ"></textarea>
+          </div>
+          <button class="btn-primary" onclick="submitNRReservation()">この内容で予約を登録する</button>
+        </div>
+        <div class="panel-card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
             <h3 style="margin:0;">予約一覧</h3>
             <input type="date" id="reserve-date" onchange="loadReserveDate()">

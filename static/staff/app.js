@@ -3,6 +3,14 @@
 let currentWeekStart = null; // ISO date string (Monday)
 let CONSENT_FORMS = []; // 同意書マスタ（メニュー編集画面の割り当て用）
 
+// ---- 電話予約（新規予約手動登録）フォーム用の状態 ----
+let NR_MENUS = [];
+let NR_STYLISTS = [];
+let nrInitialized = false;
+let nrSelectedMenus = new Set();
+let nrCompanions = [];   // { id, name, age, menuIds: Set<string> }
+let nrCompanionSeq = 0;
+
 async function api(path, options) {
   const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, options || {}));
   let data = null;
@@ -91,7 +99,7 @@ function showSPanel(id) {
   document.querySelectorAll(".staff-panel").forEach(el => el.classList.toggle("active", el.id === id));
   document.querySelectorAll(".side-nav button[data-panel]").forEach(b => b.classList.toggle("active", b.dataset.panel === id));
   if (id === "s-dashboard") loadDashboard();
-  if (id === "s-reserve") loadReserveDate();
+  if (id === "s-reserve") { loadReserveDate(); if (!nrInitialized) initNRForm(); }
   if (id === "s-karte") loadCustomers();
   if (id === "s-shift") loadShift();
   if (id === "s-menu") loadMenus();
@@ -259,6 +267,271 @@ async function updateStatus(id, status) {
     msg.classList.add("show");
   } else if (msg) {
     msg.classList.remove("show");
+  }
+}
+
+/* ---------------- 電話予約（新規予約手動登録） ---------------- */
+// 薬剤の関係上、同時（同じ方）に施術できないメニューの組み合わせ（お客様向け画面・サーバーと同じルール）。
+const NR_MENU_CONFLICT_GROUPS = [
+  [["ブリーチ"], ["パーマ", "縮毛矯正"]],
+];
+function nrMenuConflictMessage(menuIds) {
+  const names = new Set([...menuIds].map(id => {
+    const m = NR_MENUS.find(m => m.id === id);
+    return m ? m.name : null;
+  }));
+  for (const [groupA, groupB] of NR_MENU_CONFLICT_GROUPS) {
+    const aHit = groupA.filter(n => names.has(n));
+    const bHit = groupB.filter(n => names.has(n));
+    if (aHit.length && bHit.length) {
+      return `${aHit.join("・")}は${bHit.join("・")}と同時にはご予約いただけません`;
+    }
+  }
+  return null;
+}
+// 薬剤メニューは15歳以下不可（お客様向け画面・サーバーと同じルール。consent_form_idで判定）。
+const NR_AGE_RESTRICTED_CONSENT_FORM_IDS = new Set(["cf-color", "cf-perm"]);
+const NR_AGE_RESTRICTION_MIN_AGE = 16;
+function nrAgeRequirementMessage(menuIds, age) {
+  const names = [...new Set([...menuIds]
+    .map(id => NR_MENUS.find(m => m.id === id))
+    .filter(m => m && NR_AGE_RESTRICTED_CONSENT_FORM_IDS.has(m.consent_form_id))
+    .map(m => m.name))];
+  if (names.length === 0) return null;
+  const label = names.join("・");
+  if (age == null || Number.isNaN(age)) return `${label}をご予約の場合は、年齢の入力が必要です`;
+  if (age < NR_AGE_RESTRICTION_MIN_AGE) return `${label}は15歳以下の方はご予約いただけません`;
+  return null;
+}
+
+function showNRMsg(text, isError) {
+  const errBox = document.getElementById("nr-error");
+  errBox.textContent = text;
+  errBox.style.background = isError ? "" : "#e7f6e7";
+  errBox.style.borderColor = isError ? "" : "var(--good)";
+  errBox.style.color = isError ? "" : "#0a6b0a";
+  errBox.classList.add("show");
+}
+function clearNRMsg() {
+  document.getElementById("nr-error").classList.remove("show");
+}
+
+async function initNRForm() {
+  nrInitialized = true;
+  const [menus, stylists] = await Promise.all([api("/api/menus"), api("/api/stylists")]);
+  NR_MENUS = menus;
+  NR_STYLISTS = stylists;
+  document.getElementById("nr-stylist").innerHTML = stylists.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
+  document.getElementById("nr-date").value = todayISO();
+  renderNRMenuList();
+  renderNRCompanions();
+  refreshNRTimeSlots();
+}
+
+function nrMenuRowHtml(m) {
+  const checked = nrSelectedMenus.has(m.id) ? "checked" : "";
+  return `
+    <div class="menu-card">
+      <div class="menu-row">
+        <input type="checkbox" ${checked} onchange="toggleNRMenu('${m.id}')">
+        <div><div class="mname">${m.name}</div>${m.meta ? `<div class="mmeta">${m.meta}</div>` : ""}</div>
+      </div>
+      <div class="price-col">
+        <div class="mprice">¥${m.price.toLocaleString()}${m.price_is_from ? "〜" : ""}</div>
+      </div>
+    </div>`;
+}
+function renderNRMenuList() {
+  document.getElementById("nr-menu-list").innerHTML = NR_MENUS.map(m => nrMenuRowHtml(m)).join("");
+}
+function toggleNRMenu(id) {
+  clearNRMsg();
+  if (nrSelectedMenus.has(id)) {
+    nrSelectedMenus.delete(id);
+  } else {
+    nrSelectedMenus.add(id);
+    const msg = nrMenuConflictMessage(nrSelectedMenus);
+    if (msg) {
+      nrSelectedMenus.delete(id);
+      showNRMsg(msg, true);
+      renderNRMenuList();
+      return;
+    }
+  }
+  renderNRMenuList();
+  refreshNRTimeSlots();
+}
+
+function nrCompanionMenuRowHtml(comp, m) {
+  const checked = comp.menuIds.has(m.id) ? "checked" : "";
+  return `
+    <label class="companion-menu-row">
+      <input type="checkbox" ${checked} onchange="toggleNRCompanionMenu('${comp.id}','${m.id}')">
+      <span class="companion-menu-name">${escapeHtml(m.name)}</span>
+      <span class="companion-menu-price">¥${m.price.toLocaleString()}${m.price_is_from ? "〜" : ""}</span>
+    </label>`;
+}
+function nrCompanionCardHtml(comp) {
+  return `
+    <div class="companion-card" id="nr-companion-${comp.id}">
+      <div class="companion-card-head">
+        <input type="text" class="companion-name-input" placeholder="お名前" value="${escapeHtml(comp.name)}" oninput="updateNRCompanionName('${comp.id}', this.value)">
+        <input type="number" class="companion-age-input" placeholder="年齢" min="1" max="119" value="${comp.age === "" || comp.age == null ? "" : escapeHtml(comp.age)}" oninput="updateNRCompanionAge('${comp.id}', this.value)">
+        <button type="button" class="companion-remove-btn" onclick="removeNRCompanion('${comp.id}')" aria-label="お連れ様を削除">✕</button>
+      </div>
+      <div class="companion-menu-list">
+        ${NR_MENUS.map(m => nrCompanionMenuRowHtml(comp, m)).join("")}
+      </div>
+    </div>`;
+}
+function renderNRCompanions() {
+  document.getElementById("nr-companion-list").innerHTML = nrCompanions.map(c => nrCompanionCardHtml(c)).join("");
+}
+function addNRCompanion() {
+  nrCompanionSeq++;
+  nrCompanions.push({ id: "nrcomp" + nrCompanionSeq, name: "", age: "", menuIds: new Set() });
+  renderNRCompanions();
+}
+function removeNRCompanion(id) {
+  nrCompanions = nrCompanions.filter(c => c.id !== id);
+  renderNRCompanions();
+  refreshNRTimeSlots();
+}
+function updateNRCompanionName(id, value) {
+  const c = nrCompanions.find(c => c.id === id);
+  if (c) c.name = value;
+}
+function updateNRCompanionAge(id, value) {
+  const c = nrCompanions.find(c => c.id === id);
+  if (c) c.age = value;
+}
+function toggleNRCompanionMenu(id, menuId) {
+  clearNRMsg();
+  const c = nrCompanions.find(c => c.id === id);
+  if (!c) return;
+  if (c.menuIds.has(menuId)) {
+    c.menuIds.delete(menuId);
+  } else {
+    c.menuIds.add(menuId);
+    const msg = nrMenuConflictMessage(c.menuIds);
+    if (msg) {
+      c.menuIds.delete(menuId);
+      showNRMsg(msg, true);
+      renderNRCompanions();
+      return;
+    }
+  }
+  renderNRCompanions();
+  refreshNRTimeSlots();
+}
+
+// 選択中の日付・スタイリスト・メニュー（本人＋お連れ様）から、予約可能な時間の一覧を取得して
+// 「お時間」のプルダウンに反映する。
+async function onNRContextChanged() {
+  refreshNRTimeSlots();
+}
+async function refreshNRTimeSlots() {
+  const timeSel = document.getElementById("nr-time");
+  const date = document.getElementById("nr-date").value;
+  const stylistId = document.getElementById("nr-stylist").value;
+  const allMenuIds = [...nrSelectedMenus, ...nrCompanions.flatMap(c => [...c.menuIds])];
+  if (!date || !stylistId || allMenuIds.length === 0) {
+    timeSel.innerHTML = `<option value="">先にご来店日・スタイリスト・メニューを選択してください</option>`;
+    return;
+  }
+  const durationMin = allMenuIds.reduce((sum, id) => {
+    const m = NR_MENUS.find(m => m.id === id);
+    return sum + (m ? m.duration_min : 0);
+  }, 0);
+  const data = await api(`/api/availability?date=${date}&stylistId=${stylistId}&durationMin=${durationMin}&menuIds=${allMenuIds.join(",")}`);
+  const available = data.slots.filter(s => s.available);
+  if (!available.length) {
+    timeSel.innerHTML = `<option value="">この日・このスタイリストに空き時間がありません</option>`;
+    return;
+  }
+  timeSel.innerHTML = available.map(s => `<option value="${s.time}">${s.time}</option>`).join("");
+}
+
+async function lookupNRCustomerByPhone() {
+  const phone = document.getElementById("nr-phone").value.replace(/\D/g, "");
+  if (!phone) return;
+  try {
+    const customers = await api("/api/staff/customers");
+    const cust = customers.find(c => (c.phone || "").replace(/\D/g, "") === phone);
+    if (cust) {
+      if (!document.getElementById("nr-name").value.trim()) document.getElementById("nr-name").value = cust.name || "";
+      if (cust.gender === "男性" || cust.gender === "女性") document.getElementById("nr-gender").value = cust.gender;
+      if (cust.age != null && !document.getElementById("nr-age").value) document.getElementById("nr-age").value = cust.age;
+      showNRMsg(`既存のお客様「${cust.name}」様が見つかりました。内容を確認してください。`, false);
+    }
+  } catch (e) {
+    // 検索失敗は致命的ではないため、入力自体は続行できるようにする
+  }
+}
+
+async function submitNRReservation() {
+  clearNRMsg();
+  const phone = document.getElementById("nr-phone").value.trim();
+  const name = document.getElementById("nr-name").value.trim();
+  const gender = document.getElementById("nr-gender").value || null;
+  const ageRaw = document.getElementById("nr-age").value;
+  const age = ageRaw === "" ? null : parseInt(ageRaw, 10);
+  const date = document.getElementById("nr-date").value;
+  const stylistId = document.getElementById("nr-stylist").value;
+  const time = document.getElementById("nr-time").value;
+  const note = document.getElementById("nr-note").value.trim();
+
+  if (!phone || !name || !date || !stylistId || nrSelectedMenus.size === 0 || !time) {
+    showNRMsg("電話番号・お名前・ご来店日・スタイリスト・メニュー・お時間をすべて入力してください。", true);
+    return;
+  }
+  const primaryAgeMsg = nrAgeRequirementMessage(nrSelectedMenus, age);
+  if (primaryAgeMsg) {
+    showNRMsg(primaryAgeMsg, true);
+    return;
+  }
+  const validNRCompanions = nrCompanions.filter(c => c.name.trim() && c.menuIds.size > 0);
+  for (const c of validNRCompanions) {
+    const cAge = c.age === "" || c.age == null ? null : parseInt(c.age, 10);
+    const cAgeMsg = nrAgeRequirementMessage(c.menuIds, cAge);
+    if (cAgeMsg) {
+      showNRMsg(`${c.name.trim()}様：${cAgeMsg}`, true);
+      return;
+    }
+  }
+
+  const payload = {
+    date, time, stylistId,
+    menuIds: [...nrSelectedMenus],
+    customerName: name,
+    customerPhone: phone,
+    customerGender: gender,
+    customerAge: age,
+    note,
+    companions: validNRCompanions.map(c => ({
+      name: c.name.trim(),
+      age: c.age === "" || c.age == null ? null : parseInt(c.age, 10),
+      menuIds: [...c.menuIds],
+    })),
+  };
+  try {
+    await api("/api/staff/reservations", { method: "POST", body: JSON.stringify(payload) });
+    showNRMsg("予約を登録しました。", false);
+    document.getElementById("nr-phone").value = "";
+    document.getElementById("nr-name").value = "";
+    document.getElementById("nr-gender").value = "";
+    document.getElementById("nr-age").value = "";
+    document.getElementById("nr-note").value = "";
+    nrSelectedMenus = new Set();
+    nrCompanions = [];
+    renderNRMenuList();
+    renderNRCompanions();
+    refreshNRTimeSlots();
+    document.getElementById("reserve-date").value = date;
+    loadReserveDate();
+    loadDashboard();
+  } catch (e) {
+    showNRMsg(e.message || "予約の登録に失敗しました", true);
   }
 }
 
