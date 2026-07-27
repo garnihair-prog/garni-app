@@ -228,17 +228,29 @@ function referralCouponCellHtml(r) {
 async function loadReserveDate() {
   const date = document.getElementById("reserve-date").value || todayISO();
   const rows = await api(`/api/staff/reservations?date=${date}`);
-  document.getElementById("reserve-body").innerHTML = rows.map(r => `
+  const showCancelled = document.getElementById("reserve-show-cancelled").checked;
+  const isCancelledStatus = r => r.status === "cancel" || r.status === "no_show";
+  const visibleRows = showCancelled ? rows : rows.filter(r => !isCancelledStatus(r));
+  const hiddenCount = rows.length - visibleRows.length;
+
+  document.getElementById("reserve-body").innerHTML = visibleRows.map(r => `
     <tr>
       <td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}${companionSummaryHtml(r)}</td><td>${r.customer_phone}</td><td>${r.menu_names}</td>
       <td>${r.stylist_name}</td><td class="amt">¥${r.total_price.toLocaleString()}</td>
       <td>${photoThumbHtml(r.style_photo_path, "希望スタイル")}</td>
       <td>
         ${statusSelectHtml(r)}
-        ${(r.status === "cancel" || r.status === "no_show") && r.cancellation_fee > 0 ? `<div style="font-size:11px;color:var(--critical);font-weight:700;margin-top:4px;">キャンセル料 ¥${r.cancellation_fee.toLocaleString()}</div>` : ""}
+        ${isCancelledStatus(r) && r.cancellation_fee > 0 ? `<div style="font-size:11px;color:var(--critical);font-weight:700;margin-top:4px;">キャンセル料 ¥${r.cancellation_fee.toLocaleString()}</div>` : ""}
         ${referralCouponCellHtml(r)}
       </td>
-    </tr>`).join("") || `<tr><td colspan="8" style="color:var(--text-muted);">この日の予約はありません</td></tr>`;
+    </tr>`).join("") || (rows.length
+      ? `<tr><td colspan="8" style="color:var(--text-muted);">この日の予約はすべてキャンセル・無断キャンセルです（「キャンセル・無断キャンセルも表示する」にチェックすると表示されます）</td></tr>`
+      : `<tr><td colspan="8" style="color:var(--text-muted);">この日の予約はありません</td></tr>`);
+
+  const hiddenNoteBox = document.getElementById("reserve-hidden-note");
+  if (hiddenNoteBox) {
+    hiddenNoteBox.textContent = hiddenCount > 0 ? `※ キャンセル・無断キャンセル ${hiddenCount}件を非表示中` : "";
+  }
 }
 async function applyReferralReward(rewardId, reservationId) {
   const msg = document.getElementById("reserve-msg");
