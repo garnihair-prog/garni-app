@@ -537,6 +537,8 @@ async function submitNRReservation() {
 
 /* ---------------- KARTE ---------------- */
 let selectedCustomerId = null;
+let editingCustomerId = null;
+let currentKarteData = null;
 async function loadCustomers() {
   const rows = await api("/api/staff/customers");
   document.getElementById("cust-list").innerHTML = rows.map(c => `
@@ -553,17 +555,67 @@ async function loadCustomers() {
 }
 async function selectCustomer(id) {
   selectedCustomerId = id;
+  editingCustomerId = null;
   document.querySelectorAll(".cust-row").forEach(r => r.classList.remove("sel"));
-  const data = await api(`/api/staff/customers/${id}`);
+  currentKarteData = await api(`/api/staff/customers/${id}`);
+  renderKarteDetail();
+  loadCustomers();
+}
+function startEditCustomer(id) {
+  editingCustomerId = id;
+  renderKarteDetail();
+}
+function cancelCustomerEdit() {
+  editingCustomerId = null;
+  renderKarteDetail();
+}
+async function saveCustomerEdit(id) {
+  const name = document.getElementById("edit-cust-name").value.trim();
+  const phone = document.getElementById("edit-cust-phone").value.trim();
+  const msgBox = document.getElementById("karte-edit-msg");
+  if (!name || !phone) {
+    if (msgBox) { msgBox.textContent = "お名前と電話番号を入力してください"; msgBox.classList.add("show"); }
+    return;
+  }
+  try {
+    await api(`/api/staff/customers/${id}`, { method: "PATCH", body: JSON.stringify({ name, phone }) });
+    editingCustomerId = null;
+    await selectCustomer(id);
+  } catch (e) {
+    if (msgBox) {
+      msgBox.textContent = e.message || "保存に失敗しました";
+      msgBox.classList.add("show");
+    }
+  }
+}
+function renderKarteDetail() {
+  const data = currentKarteData;
+  if (!data) return;
+  const c = data.customer;
+  const isEditing = editingCustomerId === c.id;
+  const headerHtml = isEditing ? `
+      <div style="flex:1;">
+        <input id="edit-cust-name" type="text" value="${escapeHtml(c.name)}" placeholder="お名前" style="font-weight:700;font-size:14px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;box-sizing:border-box;">
+        <input id="edit-cust-phone" type="tel" value="${escapeHtml(c.phone)}" placeholder="電話番号" style="font-size:13px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:8px;box-sizing:border-box;">
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;flex:0 0 auto;">
+        <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--brand);border-radius:8px;color:var(--brand);font-size:11.5px;" onclick="saveCustomerEdit('${c.id}')">保存</button>
+        <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;" onclick="cancelCustomerEdit()">キャンセル</button>
+      </div>` : `
+      <div>
+        <div style="font-weight:700;font-size:15px;">${escapeHtml(c.name)}</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">${escapeHtml(c.rank)} ／ 電話：${escapeHtml(c.phone)} ／ ${c.points}pt</div>
+      </div>
+      <div style="display:flex;gap:6px;flex:0 0 auto;">
+        <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;" onclick="startEditCustomer('${c.id}')">編集</button>
+        <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--critical);border-radius:8px;color:var(--critical);font-size:11.5px;" onclick="deleteCustomer('${c.id}', '${c.name.replace(/'/g, "\\'")}')">お客様を削除</button>
+      </div>`;
   document.getElementById("karte-detail").innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-      <div>
-        <div style="font-weight:700;font-size:15px;">${data.customer.name}</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">${data.customer.rank} ／ 電話：${data.customer.phone} ／ ${data.customer.points}pt</div>
-      </div>
-      <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--critical);border-radius:8px;color:var(--critical);font-size:11.5px;flex:0 0 auto;" onclick="deleteCustomer('${data.customer.id}', '${data.customer.name.replace(/'/g, "\\'")}')">お客様を削除</button>
+      ${headerHtml}
     </div>
     <div class="error-banner" id="karte-msg"></div>
+    <div class="error-banner" id="karte-edit-msg"></div>
     ${referralInfoHtml(data)}
     ${consentInfoHtml(data)}
     <div class="karte-history">
@@ -587,7 +639,6 @@ async function selectCustomer(id) {
           </div>
         </div>`).join("") || `<div style="font-size:12px;color:var(--text-muted);">来店履歴はまだありません</div>`}
     </div>`;
-  loadCustomers();
 }
 
 async function deleteCustomer(id, name) {
