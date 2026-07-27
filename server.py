@@ -1536,6 +1536,38 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return self.send_json(200, row_to_dict(row))
 
+        m = re.match(r"^/api/staff/customers/([\w-]+)$", path)
+        if m:
+            if not self.require_staff():
+                return
+            cid = m.group(1)
+            conn = db.get_conn()
+            existing = conn.execute("SELECT * FROM customers WHERE id=?", (cid,)).fetchone()
+            if not existing:
+                conn.close()
+                return self.send_json(404, {"error": "not found"})
+            name = (body.get("name") or "").strip()
+            phone = re.sub(r"\D", "", (body.get("phone") or ""))
+            if not name or not phone:
+                conn.close()
+                return self.send_json(400, {"error": "お名前と電話番号を入力してください"})
+            dup = conn.execute("SELECT id FROM customers WHERE phone=? AND id<>?", (phone, cid)).fetchone()
+            if dup:
+                conn.close()
+                return self.send_json(400, {"error": "この電話番号は既に他のお客様に登録されています"})
+            conn.execute("UPDATE customers SET name=?, phone=? WHERE id=?", (name, phone, cid))
+            # 過去の予約記録（カルテの来店履歴・マイページ等に表示される氏名・電話番号）も新しい内容に合わせて更新する。
+            # これにより、電話番号を変更した後もお客様が新しい電話番号でマイページから過去・今後の予約を
+            # 変わらず確認・キャンセルできる。
+            conn.execute(
+                "UPDATE reservations SET customer_name=?, customer_phone=? WHERE customer_id=?",
+                (name, phone, cid),
+            )
+            conn.commit()
+            updated = conn.execute("SELECT * FROM customers WHERE id=?", (cid,)).fetchone()
+            conn.close()
+            return self.send_json(200, row_to_dict(updated))
+
         m = re.match(r"^/api/mypage/reservations/([\w-]+)$", path)
         if m:
             rid = m.group(1)
