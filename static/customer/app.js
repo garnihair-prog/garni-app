@@ -486,9 +486,8 @@ function renderConfirm() {
   const grandTotal = primaryTotal + companionRows.reduce((a, r) => a + r.price, 0);
   const anyFromPrice = hasFromPrice || companionRows.some(r => r.hasFromPrice);
 
-  const duration = totalDurationMin();
   document.getElementById("confirm-summary").innerHTML = `
-    <div class="row"><span>来店日時</span><span>${booking.dateLabel} ${booking.time}〜${endTimeLabel(booking.time, duration)}</span></div>
+    <div class="row"><span>来店日時</span><span>${booking.dateLabel} ${booking.time}</span></div>
     <div class="row"><span>メニュー</span><span>${names.map(m => m.name).join("・")}</span></div>
     ${companionRows.map(r => `<div class="row"><span>お連れ様</span><span>${escapeHtml(r.name)}様：${r.menuNames}（¥${r.price.toLocaleString()}${r.hasFromPrice ? "〜" : ""}）</span></div>`).join("")}
     <div class="row"><span>担当</span><span>${booking.stylistName}</span></div>
