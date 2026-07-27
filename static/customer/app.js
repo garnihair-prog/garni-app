@@ -18,7 +18,7 @@ let rfRewards = [];
 let mpCancelConfirmId = null; // マイページで「キャンセルしますか？」の確認表示中の予約ID（一度に1件まで）
 let mpRewards = []; // マイページで表示する、このお客様が獲得した紹介クーポン一覧
 let calMonthOffset = 0; // 0=今月、1=来月...（カレンダーの月移動用）
-const MAX_CAL_MONTHS_AHEAD = 2; // 何ヶ月先まで予約可能にするか（今月含めて3ヶ月分）
+const MAX_CAL_MONTHS_AHEAD = 1; // 何ヶ月先まで予約可能にするか（今月含めて2ヶ月分＝1ヶ月先まで）
 const WEEKDAY_NAMES = ["日", "月", "火", "水", "木", "金", "土"];
 
 // Date型から「その端末のローカル日付」のYYYY-MM-DD文字列を作る。
