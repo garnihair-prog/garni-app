@@ -80,7 +80,7 @@
         </div>
 
         <div class="cscreen" id="c-date">
-          <div class="step-dots"><span class="on"></span><span></span><span></span><span></span><span></span></div>
+          <div class="step-dots"><span class="on"></span><span></span><span></span><span></span></div>
           <div class="section-title">来店日を選択</div>
           <div class="cal-month-nav">
             <button type="button" class="cal-nav-btn" id="cal-prev" onclick="changeCalMonth(-1)" aria-label="前の月">‹</button>
@@ -90,15 +90,8 @@
           <div class="cal-grid" id="cal-grid"></div>
         </div>
 
-        <div class="cscreen" id="c-stylist">
-          <div class="step-dots"><span class="on"></span><span class="on"></span><span></span><span></span><span></span></div>
-          <div class="section-title">スタイリストを選択</div>
-          <div class="stylist-row" id="stylist-row"></div>
-          <button class="btn-ghost" onclick="showCScreen('c-date')">戻る</button>
-        </div>
-
         <div class="cscreen" id="c-time">
-          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span></span><span></span></div>
+          <div class="step-dots"><span class="on"></span><span class="on"></span><span></span><span></span></div>
           <div class="section-title">時間を選択</div>
           <div style="font-size:11.5px;color:var(--text-muted);margin:-6px 0 12px;" id="time-duration-hint"></div>
           <div class="error-banner" id="time-error"></div>
@@ -107,7 +100,7 @@
         </div>
 
         <div class="cscreen" id="c-info">
-          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span></span></div>
+          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span></span></div>
           <div class="section-title">お客様情報</div>
           <div class="field"><label>お名前</label><input type="text" id="in-name" placeholder="例：熊本 花子"></div>
           <div class="field"><label>電話番号</label><input type="tel" id="in-phone" placeholder="例：09012345678"></div>
@@ -139,7 +132,7 @@
         </div>
 
         <div class="cscreen" id="c-consent">
-          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span></span></div>
+          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span></span></div>
           <div class="section-title" id="consent-progress">同意書のご確認</div>
           <div class="disclaimer-box" id="consent-box">
             <div class="disclaimer-title" id="consent-title"></div>
@@ -155,7 +148,7 @@
         </div>
 
         <div class="cscreen" id="c-confirm">
-          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
+          <div class="step-dots"><span class="on"></span><span class="on"></span><span class="on"></span><span class="on"></span></div>
           <div class="section-title">予約内容の確認</div>
           <div class="summary-box" id="confirm-summary"></div>
           <div class="disclaimer-box" id="confirm-disclaimer">
@@ -168,7 +161,7 @@
           </label>
           <div class="error-banner" id="confirm-error"></div>
           <button class="btn-primary" id="btn-confirm" onclick="finishBooking()" disabled>この内容で予約する</button>
-          <button class="btn-ghost" onclick="showCScreen('c-stylist')">戻って修正する</button>
+          <button class="btn-ghost" onclick="showCScreen('c-time')">戻って修正する</button>
         </div>
 
         <div class="cscreen" id="c-success">

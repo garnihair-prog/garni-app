@@ -264,29 +264,17 @@ function renderCalendar() {
   document.getElementById("cal-grid").innerHTML = html;
 }
 
-function selectDate(iso, day) {
+async function selectDate(iso, day) {
   booking.date = iso;
   booking.dateLabel = iso.replace(/-/g, "/");
   document.querySelectorAll("#cal-grid button").forEach(b => b.classList.remove("sel"));
   document.getElementById("cal-" + day).classList.add("sel");
-  renderStylists();
-  showCScreen("c-stylist");
-}
-
-function renderStylists() {
-  document.getElementById("stylist-row").innerHTML = STYLISTS.map(s => `
-    <div class="stylist-chip" id="sty-${s.id}" onclick="selectStylist('${s.id}', '${s.name}')">
-      <div class="av">${s.name[0]}</div>
-      <div class="nm">${s.name}</div>
-      <div class="rl">${s.role}</div>
-    </div>`).join("");
-}
-
-async function selectStylist(id, name) {
-  booking.stylistId = id;
-  booking.stylistName = name;
-  document.querySelectorAll(".stylist-chip").forEach(c => c.classList.remove("sel"));
-  document.getElementById("sty-" + id).classList.add("sel");
+  // 個人店のため、スタイリスト選択画面は設けず、登録されている（先頭の）スタイリストに自動で予約する
+  const stylist = STYLISTS[0];
+  if (stylist) {
+    booking.stylistId = stylist.id;
+    booking.stylistName = stylist.name;
+  }
   await renderSlots();
   showCScreen("c-time");
 }
