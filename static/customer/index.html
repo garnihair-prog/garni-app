@@ -94,6 +94,7 @@
           <div class="step-dots"><span class="on"></span><span class="on"></span><span></span><span></span><span></span></div>
           <div class="section-title">スタイリストを選択</div>
           <div class="stylist-row" id="stylist-row"></div>
+          <button class="btn-ghost" onclick="showCScreen('c-date')">戻る</button>
         </div>
 
         <div class="cscreen" id="c-time">
@@ -102,6 +103,7 @@
           <div style="font-size:11.5px;color:var(--text-muted);margin:-6px 0 12px;" id="time-duration-hint"></div>
           <div class="error-banner" id="time-error"></div>
           <div class="slot-grid" id="slot-grid"></div>
+          <button class="btn-ghost" onclick="showCScreen('c-date')">来店日選択に戻る</button>
         </div>
 
         <div class="cscreen" id="c-info">
@@ -133,6 +135,7 @@
           </div>
           <div class="error-banner" id="stylist-error"></div>
           <button class="btn-primary" onclick="goConfirm()">確認画面へ</button>
+          <button class="btn-ghost" onclick="showCScreen('c-time')">時間選択に戻る</button>
         </div>
 
         <div class="cscreen" id="c-consent">
