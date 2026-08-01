@@ -263,6 +263,25 @@ def weekday_js(date_str):
     return (d.weekday() + 1) % 7  # Python: 月=0..日=6 -> JS: 日=0..土=6
 
 
+# お客様向け予約が可能な期間（今月含めて何ヶ月先の月まで予約できるか）。
+# static/customer/app.js の MAX_CAL_MONTHS_AHEAD と必ず同じ値にすること
+# （画面側のカレンダー表示だけでなく、サーバー側でも同じ期間で予約を拒否するため）。
+# スタッフ画面からの電話予約登録（POST /api/staff/reservations）にはこの制限を適用しない。
+CUSTOMER_MAX_BOOKING_MONTHS_AHEAD = 1
+
+
+def is_beyond_customer_booking_window(date_str):
+    """お客様向け予約の日付（YYYY-MM-DD）が、予約可能期間（今月〜
+    CUSTOMER_MAX_BOOKING_MONTHS_AHEAD ヶ月先の月末まで）を超えているかを判定する。"""
+    try:
+        d = datetime.date.fromisoformat(date_str)
+    except ValueError:
+        return True
+    today = jst_today()
+    months_ahead = (d.year - today.year) * 12 + (d.month - today.month)
+    return months_ahead > CUSTOMER_MAX_BOOKING_MONTHS_AHEAD
+
+
 def business_hours_range(settings):
     try:
         return time_to_min(settings["open_time"]), time_to_min(settings["close_time"])
@@ -966,6 +985,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": "入力が不足しています"})
             date, time_, stylist_id = body["date"], body["time"], body["stylistId"]
             menu_ids = body["menuIds"]
+            if is_beyond_customer_booking_window(date):
+                return self.send_json(409, {"error": "ご予約は1ヶ月先までとなります。それ以降のご予約はお電話等でご相談ください。"})
             name, phone = body["customerName"].strip(), re.sub(r"\D", "", body["customerPhone"])
             note = body.get("note", "")
             gender = body.get("customerGender") or None
