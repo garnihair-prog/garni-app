@@ -634,7 +634,7 @@ class Handler(BaseHTTPRequestHandler):
             busy_ranges = [(time_to_min(r["time"]), time_to_min(r["time"]) + r["duration_min"]) for r in existing]
 
             slots = []
-            slot_times = generate_slot_times(business_range[0], business_range[1])
+            slot_times = generate_slot_times(business_range[0], business_range[1], step_min=30)
             for t in slot_times:
                 start = time_to_min(t)
                 end = start + duration
