@@ -750,7 +750,13 @@ async function uploadKartePhoto(karteId, input) {
 const SHIFT_CYCLE = ["off", "9-18", "10-19"];
 async function loadShift() {
   const data = await api(`/api/staff/shifts?weekStart=${currentWeekStart}`);
-  let html = `<div class="hd"></div>` + data.days.map(d => `<div class="hd">${d.slice(5).replace("-", "/")}</div>`).join("");
+  const dayInfo = data.dayInfo || data.days.map(d => ({ date: d, closedWeekday: false, closedDate: false }));
+  let html = `<div class="hd"></div>` + dayInfo.map(info => {
+    const label = info.date.slice(5).replace("-", "/");
+    if (info.closedDate) return `<div class="hd hd-closed">${label}<br>臨時休業</div>`;
+    if (info.closedWeekday) return `<div class="hd hd-closed">${label}<br>定休日</div>`;
+    return `<div class="hd">${label}</div>`;
+  }).join("");
   data.grid.forEach(row => {
     html += `<div class="nm-cell"><div class="av2">${row.name[0]}</div>${row.name}</div>`;
     row.cells.forEach(c => {
