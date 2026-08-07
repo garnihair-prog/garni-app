@@ -848,6 +848,9 @@ class Handler(BaseHTTPRequestHandler):
             start = datetime.date.fromisoformat(week_start)
             days = [(start + datetime.timedelta(days=i)).isoformat() for i in range(7)]
             conn = db.get_conn()
+            settings = get_settings(conn)
+            closed_weekdays = closed_weekdays_set(settings)
+            closed_dates = closed_dates_set(conn)
             stylists = conn.execute("SELECT * FROM stylists ORDER BY sort_order").fetchall()
             shift_rows = conn.execute(
                 "SELECT * FROM shifts WHERE date IN (%s)" % ",".join("?" * len(days)), days
@@ -856,13 +859,22 @@ class Handler(BaseHTTPRequestHandler):
             shift_map = {}
             for r in shift_rows:
                 shift_map.setdefault(r["stylist_id"], {})[r["date"]] = r["label"]
+            # 定休日（曜日）・臨時休業日を、週間シフト表のヘッダーで一目でわかるようにするための付加情報。
+            day_info = [
+                {
+                    "date": d,
+                    "closedWeekday": weekday_js(d) in closed_weekdays,
+                    "closedDate": d in closed_dates,
+                }
+                for d in days
+            ]
             grid = []
             for s in stylists:
                 row = {"stylistId": s["id"], "name": s["name"], "cells": []}
                 for d in days:
                     row["cells"].append({"date": d, "label": shift_map.get(s["id"], {}).get(d, "off")})
                 grid.append(row)
-            return self.send_json(200, {"days": days, "grid": grid})
+            return self.send_json(200, {"days": days, "dayInfo": day_info, "grid": grid})
 
         if path == "/api/staff/customer-stats":
             if not self.require_staff():
