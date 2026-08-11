@@ -1665,6 +1665,122 @@ class Handler(BaseHTTPRequestHandler):
             if not self.require_staff():
                 return
             rid = m.group(1)
+
+            if "date" in body:
+                # 予約一覧の行をクリックして開く編集画面からの内容更新。
+                # お名前・電話番号・性別・年齢・来店日・スタイリスト・メニュー・時間・備考を編集できる。
+                # お連れ様・写真は編集対象外（既存の値をそのまま保持する）。
+                required = ["date", "time", "stylistId", "menuIds", "customerName", "customerPhone"]
+                if not all(k in body and body[k] for k in required):
+                    return self.send_json(400, {"error": "入力が不足しています"})
+                conn = db.get_conn()
+                resv = conn.execute("SELECT * FROM reservations WHERE id=?", (rid,)).fetchone()
+                if not resv:
+                    conn.close()
+                    return self.send_json(404, {"error": "not found"})
+
+                date, time_, stylist_id = body["date"], body["time"], body["stylistId"]
+                menu_ids = body["menuIds"]
+                name, phone = body["customerName"].strip(), re.sub(r"\D", "", body["customerPhone"])
+                note = body.get("note", "")
+                gender = body.get("customerGender") or None
+                if gender not in ("男性", "女性"):
+                    gender = None
+                age_raw = body.get("customerAge")
+                age = None
+                if isinstance(age_raw, (int, float)) and 0 < age_raw < 120:
+                    age = int(age_raw)
+
+                settings = get_settings(conn)
+                if weekday_js(date) in closed_weekdays_set(settings):
+                    conn.close()
+                    return self.send_json(409, {"error": "その日は定休日です"})
+                if date in closed_dates_set(conn):
+                    conn.close()
+                    return self.send_json(409, {"error": "その日は臨時休業日です"})
+                menu_rows, total_duration, total_price = menu_duration_total(conn, menu_ids)
+                if not menu_rows:
+                    conn.close()
+                    return self.send_json(400, {"error": "メニューを選択してください"})
+                conflict_msg = menu_conflict_message(menu_rows)
+                if conflict_msg:
+                    conn.close()
+                    return self.send_json(400, {"error": conflict_msg})
+                age_msg = age_requirement_message(menu_rows, age)
+                if age_msg:
+                    conn.close()
+                    return self.send_json(400, {"error": age_msg})
+                menu_names = "・".join(r["name"] for r in menu_rows)
+
+                # お連れ様分の所要時間・金額は、既存の内訳（合計値のみ保存されている）をそのまま合算する。
+                existing_companions = json.loads(resv["companions"]) if resv["companions"] else []
+                all_menu_ids = list(menu_ids)
+                for c in existing_companions:
+                    total_duration += c.get("durationMin", 0)
+                    total_price += c.get("price", 0)
+
+                shift = conn.execute(
+                    "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
+                ).fetchone()
+                if shift and shift["label"] == "off":
+                    conn.close()
+                    return self.send_json(409, {"error": "指定のスタイリストは休みの日です"})
+                business_range = business_hours_range(settings)
+                shift_range = parse_shift_range(shift["label"]) if shift else business_range
+                if shift_range is None:
+                    shift_range = business_range
+                open_min, close_min = shift_range
+                open_min = max(open_min, business_range[0])
+                close_min = min(close_min, business_range[1])
+                req_start = time_to_min(time_)
+                req_end = req_start + total_duration
+                if req_start < open_min or req_end > close_min:
+                    conn.close()
+                    return self.send_json(409, {"error": f"選択したメニューの所要時間（{total_duration}分）だと営業時間内に収まりません"})
+                last_order_min = effective_last_order_min(conn, settings, all_menu_ids)
+                if last_order_min is not None and req_start > last_order_min:
+                    conn.close()
+                    return self.send_json(409, {"error": f"選択したメニューの最終受付時間（{min_to_time(last_order_min)}）を過ぎています"})
+
+                existing = conn.execute(
+                    "SELECT time, duration_min FROM reservations WHERE date=? AND stylist_id=? AND status NOT IN ('cancel', 'no_show') AND id != ?",
+                    (date, stylist_id, rid),
+                ).fetchall()
+                for r in existing:
+                    bs = time_to_min(r["time"])
+                    be = bs + r["duration_min"]
+                    if ranges_overlap(req_start, req_end, bs, be):
+                        conn.close()
+                        return self.send_json(409, {"error": "この時間帯はすでに予約が入っています"})
+
+                cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
+                if cust:
+                    customer_id = cust["id"]
+                    if cust["name"] != name:
+                        conn.execute("UPDATE customers SET name=? WHERE id=?", (name, customer_id))
+                    if gender is not None:
+                        conn.execute("UPDATE customers SET gender=? WHERE id=?", (gender, customer_id))
+                    if age is not None:
+                        conn.execute("UPDATE customers SET age=? WHERE id=?", (age, customer_id))
+                    if cust["archived_at"] is not None:
+                        conn.execute("UPDATE customers SET archived_at=NULL WHERE id=?", (customer_id,))
+                else:
+                    customer_id = db.new_id()
+                    conn.execute(
+                        "INSERT INTO customers (id, name, phone, rank, points, gender, age, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                        (customer_id, name, phone, "新規", 0, gender, age, db.now_iso()),
+                    )
+
+                conn.execute(
+                    """UPDATE reservations SET customer_id=?, customer_name=?, customer_phone=?, date=?, time=?,
+                       stylist_id=?, menu_names=?, total_price=?, duration_min=?, note=? WHERE id=?""",
+                    (customer_id, name, phone, date, time_, stylist_id, menu_names, total_price, total_duration, note, rid),
+                )
+                conn.commit()
+                updated = conn.execute("SELECT * FROM reservations WHERE id=?", (rid,)).fetchone()
+                conn.close()
+                return self.send_json(200, row_to_dict(updated))
+
             status = body.get("status")
             if status not in ("wait", "visited", "cancel", "no_show"):
                 return self.send_json(400, {"error": "不正なステータスです"})
