@@ -587,7 +587,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_file(full)
 
         # ---- public API ----
-      if path == "/api/menus":
+        if path == "/api/menus":
             conn = db.get_conn()
             rows = conn.execute("SELECT * FROM menu_items ORDER BY sort_order").fetchall()
             conn.close()
