@@ -584,11 +584,24 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_file(full)
 
         # ---- public API ----
-        if path == "/api/menus":
+      if path == "/api/menus":
             conn = db.get_conn()
             rows = conn.execute("SELECT * FROM menu_items ORDER BY sort_order").fetchall()
             conn.close()
             return self.send_json(200, rows_to_list(rows))
+
+        if path == "/api/my-schedule":
+            if not EXPORT_TOKEN or qs.get("token") != EXPORT_TOKEN:
+                return self.send_json(403, {"error": "forbidden"})
+            today = jst_today().isoformat()
+            conn = db.get_conn()
+            rows = conn.execute(
+                "SELECT date, time, duration_min, customer_name, menu_names FROM reservations "
+                "WHERE date >= ? AND status = 'wait' ORDER BY date, time",
+                (today,),
+            ).fetchall()
+            conn.close()
+            return self.send_json(200, {"reservations": rows_to_list(rows)})
 
         if path == "/api/consent-forms":
             conn = db.get_conn()
