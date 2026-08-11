@@ -50,6 +50,9 @@ MAX_PHOTO_BYTES = 6 * 1024 * 1024  # 6MB（アップロード前にブラウザ�
 
 STAFF_PASSWORD = os.environ.get("GARNI_STAFF_PASSWORD", "garni2026")
 SESSIONS = {}  # token -> created_at (in-memory; MVP用。本番では永続セッションストアを推奨)
+# 個人スケジュールアプリ（my-schedule-app）へ予約状況を読み取り専用で連携するためのトークン。未設定なら無効。
+EXPORT_TOKEN = os.environ.get("GARNI_EXPORT_TOKEN")
+
 
 # 新規予約が入った際、オーナー様へメールで通知するための設定（環境変数が未設定の場合は通知を送らずスキップする）
 SMTP_HOST = os.environ.get("GARNI_SMTP_HOST", "smtp.gmail.com")
