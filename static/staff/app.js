@@ -11,6 +11,11 @@ let nrSelectedMenus = new Set();
 let nrCompanions = [];   // { id, name, age, menuIds: Set<string> }
 let nrCompanionSeq = 0;
 
+// ---- 予約一覧クリックでの内容編集用の状態 ----
+let ER_ROWS = [];        // 直近に読み込んだ予約一覧（クリック時にidから引く）
+let erEditingId = null;
+let erSelectedMenus = new Set();
+
 async function api(path, options) {
   const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, options || {}));
   let data = null;
@@ -232,13 +237,14 @@ async function loadReserveDate() {
   const isCancelledStatus = r => r.status === "cancel" || r.status === "no_show";
   const visibleRows = showCancelled ? rows : rows.filter(r => !isCancelledStatus(r));
   const hiddenCount = rows.length - visibleRows.length;
+  ER_ROWS = rows;
 
   document.getElementById("reserve-body").innerHTML = visibleRows.map(r => `
-    <tr>
+    <tr class="clickable-row" onclick="openEditReservation('${r.id}')">
       <td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}${companionSummaryHtml(r)}</td><td>${r.customer_phone}</td><td>${r.menu_names}</td>
       <td>${r.stylist_name}</td><td class="amt">¥${r.total_price.toLocaleString()}</td>
-      <td>${photoThumbHtml(r.style_photo_path, "希望スタイル")}</td>
-      <td>
+      <td onclick="event.stopPropagation()">${photoThumbHtml(r.style_photo_path, "希望スタイル")}</td>
+      <td onclick="event.stopPropagation()">
         ${statusSelectHtml(r)}
         ${isCancelledStatus(r) && r.cancellation_fee > 0 ? `<div style="font-size:11px;color:var(--critical);font-weight:700;margin-top:4px;">キャンセル料 ¥${r.cancellation_fee.toLocaleString()}</div>` : ""}
         ${referralCouponCellHtml(r)}
@@ -1044,6 +1050,193 @@ async function saveSettings() {
     msg.style.borderColor = "";
     msg.style.color = "";
     msg.classList.add("show");
+  }
+}
+
+/* ---------------- 予約一覧クリックでの内容編集 ---------------- */
+function showERMsg(text, isError) {
+  const errBox = document.getElementById("er-error");
+  errBox.textContent = text;
+  errBox.style.background = isError ? "" : "#e7f6e7";
+  errBox.style.borderColor = isError ? "" : "var(--good)";
+  errBox.style.color = isError ? "" : "#0a6b0a";
+  errBox.classList.add("show");
+}
+function clearERMsg() {
+  document.getElementById("er-error").classList.remove("show");
+}
+
+// お連れ様・希望写真は編集対象外（閲覧のみ）。参考情報としてそのまま表示する。
+function erReadonlyHtml(r) {
+  const comps = r.companions || [];
+  let html = "";
+  if (comps.length) {
+    const compList = comps.map(c => `${escapeHtml(c.name)}様${c.age != null ? "（" + c.age + "歳）" : ""}：${escapeHtml(c.menuNames)}（¥${c.price.toLocaleString()}）`).join("<br>");
+    html += `<div class="readonly-box"><div class="ro-title">お連れ様（編集対象外）</div>${compList}</div>`;
+  }
+  if (r.style_photo_path) {
+    html += `<div class="readonly-box"><div class="ro-title">希望スタイル写真（編集対象外）</div>${photoThumbHtml(r.style_photo_path, "希望スタイル")}</div>`;
+  }
+  return html;
+}
+
+function erMenuRowHtml(m) {
+  const checked = erSelectedMenus.has(m.id) ? "checked" : "";
+  return `
+    <div class="menu-card">
+      <div class="menu-row">
+        <input type="checkbox" ${checked} onchange="toggleERMenu('${m.id}')">
+        <div><div class="mname">${m.name}</div>${m.meta ? `<div class="mmeta">${m.meta}</div>` : ""}</div>
+      </div>
+      <div class="price-col">
+        <div class="mprice">¥${m.price.toLocaleString()}${m.price_is_from ? "〜" : ""}</div>
+      </div>
+    </div>`;
+}
+function renderERMenuList() {
+  document.getElementById("er-menu-list").innerHTML = NR_MENUS.map(m => erMenuRowHtml(m)).join("");
+}
+function toggleERMenu(id) {
+  clearERMsg();
+  if (erSelectedMenus.has(id)) {
+    erSelectedMenus.delete(id);
+  } else {
+    erSelectedMenus.add(id);
+    const msg = nrMenuConflictMessage(erSelectedMenus);
+    if (msg) {
+      erSelectedMenus.delete(id);
+      showERMsg(msg, true);
+      renderERMenuList();
+      return;
+    }
+  }
+  renderERMenuList();
+  refreshERTimeSlots();
+}
+
+async function onERContextChanged() {
+  refreshERTimeSlots();
+}
+async function refreshERTimeSlots() {
+  const timeSel = document.getElementById("er-time");
+  const date = document.getElementById("er-date").value;
+  const stylistId = document.getElementById("er-stylist").value;
+  const menuIds = [...erSelectedMenus];
+  if (!date || !stylistId || menuIds.length === 0) {
+    timeSel.innerHTML = `<option value="">先にご来店日・スタイリスト・メニューを選択してください</option>`;
+    return;
+  }
+  const durationMin = menuIds.reduce((sum, id) => {
+    const m = NR_MENUS.find(m => m.id === id);
+    return sum + (m ? m.duration_min : 0);
+  }, 0);
+  const row = ER_ROWS.find(r => r.id === erEditingId);
+  const currentTime = row ? row.time : "";
+  const data = await api(`/api/availability?date=${date}&stylistId=${stylistId}&durationMin=${durationMin}&menuIds=${menuIds.join(",")}`);
+  let available = data.slots.filter(s => s.available);
+  // 編集中の予約自身がその時間帯を占有しているため、現在の日付・スタイリストのままなら
+  // 現在の時間も選択肢に残す（他の予約とは重複していないので選べるようにする）。
+  if (row && date === row.date && stylistId === row.stylist_id && !available.some(s => s.time === currentTime) && currentTime) {
+    available = [{ time: currentTime, available: true }, ...available].sort((a, b) => a.time.localeCompare(b.time));
+  }
+  if (!available.length) {
+    timeSel.innerHTML = `<option value="">この日・このスタイリストに空き時間がありません</option>`;
+    return;
+  }
+  timeSel.innerHTML = available.map(s => `<option value="${s.time}" ${s.time === currentTime ? "selected" : ""}>${s.time}</option>`).join("");
+}
+
+// 予約の「メニュー」は menu_names（表示用に「・」で連結した名称文字列）のみ保存されており、
+// 選択されたメニューIDそのものは保存されていない（お連れ様の内訳と同じ制約）。
+// そのため、編集画面を開く際は名称からメニューマスタを逆引きしてIDを推測する。
+// 同名メニューが複数存在する場合など、完全な復元ができない可能性がある点に注意。
+function menuNamesToIds(menuNamesStr) {
+  const names = (menuNamesStr || "").split("・").map(s => s.trim()).filter(Boolean);
+  const ids = [];
+  names.forEach(n => {
+    const m = NR_MENUS.find(m => m.name === n);
+    if (m) ids.push(m.id);
+  });
+  return ids;
+}
+
+async function openEditReservation(id) {
+  const r = ER_ROWS.find(r => r.id === id);
+  if (!r) return;
+  erEditingId = id;
+  clearERMsg();
+  document.getElementById("er-phone").value = r.customer_phone || "";
+  document.getElementById("er-name").value = r.customer_name || "";
+  document.getElementById("er-gender").value = "";
+  document.getElementById("er-age").value = "";
+  document.getElementById("er-date").value = r.date;
+  document.getElementById("er-stylist").innerHTML = NR_STYLISTS.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
+  document.getElementById("er-stylist").value = r.stylist_id;
+  document.getElementById("er-note").value = r.note || "";
+  document.getElementById("er-readonly").innerHTML = erReadonlyHtml(r);
+
+  erSelectedMenus = new Set(menuNamesToIds(r.menu_names));
+  renderERMenuList();
+  refreshERTimeSlots();
+
+  document.getElementById("er-overlay").classList.remove("hidden");
+
+  // 性別・年齢は予約データ自体には保存されていないため、顧客マスタから取得する（届くまでは未選択のまま表示）。
+  try {
+    const customers = await api("/api/staff/customers");
+    const cust = customers.find(c => c.id === r.customer_id);
+    if (cust && erEditingId === id) {
+      if (cust.gender === "男性" || cust.gender === "女性") document.getElementById("er-gender").value = cust.gender;
+      if (cust.age != null) document.getElementById("er-age").value = cust.age;
+    }
+  } catch (e) {
+    // 取得失敗は致命的ではないため、性別・年齢は未選択のまま編集を続行できるようにする
+  }
+}
+function closeEditReservation() {
+  document.getElementById("er-overlay").classList.add("hidden");
+  erEditingId = null;
+}
+
+async function saveEditReservation() {
+  clearERMsg();
+  if (!erEditingId) return;
+  const phone = document.getElementById("er-phone").value.trim();
+  const name = document.getElementById("er-name").value.trim();
+  const gender = document.getElementById("er-gender").value || null;
+  const ageRaw = document.getElementById("er-age").value;
+  const age = ageRaw === "" ? null : parseInt(ageRaw, 10);
+  const date = document.getElementById("er-date").value;
+  const stylistId = document.getElementById("er-stylist").value;
+  const time = document.getElementById("er-time").value;
+  const note = document.getElementById("er-note").value.trim();
+
+  if (!phone || !name || !date || !stylistId || erSelectedMenus.size === 0 || !time) {
+    showERMsg("電話番号・お名前・ご来店日・スタイリスト・メニュー・お時間をすべて入力してください。", true);
+    return;
+  }
+  const ageMsg = nrAgeRequirementMessage(erSelectedMenus, age);
+  if (ageMsg) {
+    showERMsg(ageMsg, true);
+    return;
+  }
+
+  const payload = {
+    date, time, stylistId,
+    menuIds: [...erSelectedMenus],
+    customerName: name,
+    customerPhone: phone,
+    customerGender: gender,
+    customerAge: age,
+    note,
+  };
+  try {
+    await api(`/api/staff/reservations/${erEditingId}`, { method: "PATCH", body: JSON.stringify(payload) });
+    closeEditReservation();
+    loadReserveDate();
+    loadDashboard();
+  } catch (e) {
+    showERMsg(e.message || "更新に失敗しました", true);
   }
 }
 
