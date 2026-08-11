@@ -93,6 +93,17 @@ CREATE TABLE IF NOT EXISTS shifts (
     UNIQUE(stylist_id, date)
 );
 
+CREATE TABLE IF NOT EXISTS shift_breaks (
+    id TEXT PRIMARY KEY,
+    stylist_id TEXT NOT NULL,
+    date TEXT NOT NULL,        -- YYYY-MM-DD
+    start_time TEXT NOT NULL,  -- HH:MM
+    end_time TEXT NOT NULL,    -- HH:MM
+    note TEXT,                 -- 例：休憩、買い物（任意）
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (stylist_id) REFERENCES stylists(id)
+);
+
 CREATE TABLE IF NOT EXISTS salon_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     open_time TEXT NOT NULL DEFAULT '10:00',

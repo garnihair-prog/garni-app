@@ -103,6 +103,17 @@ def ranges_overlap(a_start, a_end, b_start, b_end):
     return a_start < b_end and b_start < a_end
 
 
+def get_break_ranges(conn, stylist_id, date):
+    """指定スタイリスト・日付に設定されている休憩時間（買い物・休憩など）を
+    (開始分, 終了分) のリストで返す。予約の空き時間チェックで、既存予約と同様に
+    「予約できない時間帯」として扱うために使う。"""
+    rows = conn.execute(
+        "SELECT start_time, end_time FROM shift_breaks WHERE stylist_id=? AND date=?",
+        (stylist_id, date),
+    ).fetchall()
+    return [(time_to_min(r["start_time"]), time_to_min(r["end_time"])) for r in rows]
+
+
 def menu_duration_total(conn, menu_ids):
     rows = conn.execute(
         "SELECT * FROM menu_items WHERE id IN (%s)" % ",".join("?" * len(menu_ids)), menu_ids
@@ -630,8 +641,10 @@ class Handler(BaseHTTPRequestHandler):
                 "SELECT time, duration_min FROM reservations WHERE date=? AND stylist_id=? AND status NOT IN ('cancel', 'no_show')",
                 (date, stylist_id),
             ).fetchall()
-            conn.close()
             busy_ranges = [(time_to_min(r["time"]), time_to_min(r["time"]) + r["duration_min"]) for r in existing]
+            # 買い物・休憩などのために設定された休憩時間も、既存予約と同様に予約できない時間として扱う。
+            busy_ranges += get_break_ranges(conn, stylist_id, date)
+            conn.close()
 
             slots = []
             slot_times = generate_slot_times(business_range[0], business_range[1], step_min=30)
@@ -855,6 +868,13 @@ class Handler(BaseHTTPRequestHandler):
             shift_rows = conn.execute(
                 "SELECT * FROM shifts WHERE date IN (%s)" % ",".join("?" * len(days)), days
             ).fetchall()
+            # 買い物・休憩などの休憩時間（表示中の週の分）。シフト表の下の一覧・削除操作に使う。
+            break_rows = conn.execute(
+                "SELECT sb.*, s.name as stylist_name FROM shift_breaks sb "
+                "JOIN stylists s ON sb.stylist_id = s.id "
+                "WHERE sb.date IN (%s) ORDER BY sb.date, sb.start_time" % ",".join("?" * len(days)),
+                days,
+            ).fetchall()
             conn.close()
             shift_map = {}
             for r in shift_rows:
@@ -874,7 +894,19 @@ class Handler(BaseHTTPRequestHandler):
                 for d in days:
                     row["cells"].append({"date": d, "label": shift_map.get(s["id"], {}).get(d, "off")})
                 grid.append(row)
-            return self.send_json(200, {"days": days, "dayInfo": day_info, "grid": grid})
+            breaks = [
+                {
+                    "id": r["id"],
+                    "stylistId": r["stylist_id"],
+                    "stylistName": r["stylist_name"],
+                    "date": r["date"],
+                    "start": r["start_time"],
+                    "end": r["end_time"],
+                    "note": r["note"] or "",
+                }
+                for r in break_rows
+            ]
+            return self.send_json(200, {"days": days, "dayInfo": day_info, "grid": grid, "breaks": breaks})
 
         if path == "/api/staff/customer-stats":
             if not self.require_staff():
@@ -1126,6 +1158,10 @@ class Handler(BaseHTTPRequestHandler):
                 if ranges_overlap(req_start, req_end, bs, be):
                     conn.close()
                     return self.send_json(409, {"error": "この時間帯はすでに予約が入っています"})
+            for bs, be in get_break_ranges(conn, stylist_id, date):
+                if ranges_overlap(req_start, req_end, bs, be):
+                    conn.close()
+                    return self.send_json(409, {"error": "その時間帯は担当スタイリストの休憩時間のためご予約いただけません"})
 
             cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
             referral_applied = False
@@ -1300,6 +1336,10 @@ class Handler(BaseHTTPRequestHandler):
                 if ranges_overlap(req_start, req_end, bs, be):
                     conn.close()
                     return self.send_json(409, {"error": "この時間帯はすでに予約が入っています"})
+            for bs, be in get_break_ranges(conn, stylist_id, date):
+                if ranges_overlap(req_start, req_end, bs, be):
+                    conn.close()
+                    return self.send_json(409, {"error": "その時間帯は担当スタイリストの休憩時間のためご予約いただけません"})
 
             cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
             referral_applied = False
@@ -1364,6 +1404,89 @@ class Handler(BaseHTTPRequestHandler):
             conn.commit()
             conn.close()
             return self.send_json(200, {"ok": True})
+
+        if path == "/api/staff/shift-breaks":
+            # シフト管理画面から、買い物・休憩などのために「予約を入れさせない時間帯」を登録する。
+            if not self.require_staff():
+                return
+            stylist_id = body.get("stylistId")
+            date = body.get("date")
+            start_time = body.get("start")
+            end_time = body.get("end")
+            note = (body.get("note") or "").strip()
+            if not stylist_id or not date or not start_time or not end_time:
+                return self.send_json(400, {"error": "入力が不足しています"})
+            if not TIME_RE.match(start_time) or not TIME_RE.match(end_time):
+                return self.send_json(400, {"error": "時刻の形式が正しくありません"})
+            start_min, end_min = time_to_min(start_time), time_to_min(end_time)
+            if start_min >= end_min:
+                return self.send_json(400, {"error": "終了時刻は開始時刻より後にしてください"})
+
+            conn = db.get_conn()
+            stylist = conn.execute("SELECT id FROM stylists WHERE id=?", (stylist_id,)).fetchone()
+            if not stylist:
+                conn.close()
+                return self.send_json(404, {"error": "スタイリストが見つかりません"})
+            settings = get_settings(conn)
+            if weekday_js(date) in closed_weekdays_set(settings):
+                conn.close()
+                return self.send_json(409, {"error": "その日は定休日です"})
+            if date in closed_dates_set(conn):
+                conn.close()
+                return self.send_json(409, {"error": "その日は臨時休業日です"})
+            shift = conn.execute(
+                "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
+            ).fetchone()
+            if shift and shift["label"] == "off":
+                conn.close()
+                return self.send_json(409, {"error": "その日はお休みのため、休憩時間を設定できません"})
+            business_range = business_hours_range(settings)
+            shift_range = parse_shift_range(shift["label"]) if shift else business_range
+            if shift_range is None:
+                shift_range = business_range
+            open_min = max(shift_range[0], business_range[0])
+            close_min = min(shift_range[1], business_range[1])
+            if start_min < open_min or end_min > close_min:
+                conn.close()
+                return self.send_json(409, {"error": f"勤務時間（{min_to_time(open_min)}〜{min_to_time(close_min)}）の範囲内で設定してください"})
+
+            # 既存のご予約と重複する時間帯には休憩を設定できない（先にご予約を調整してください、とする）。
+            existing_resv = conn.execute(
+                "SELECT time, duration_min FROM reservations WHERE date=? AND stylist_id=? AND status NOT IN ('cancel', 'no_show')",
+                (date, stylist_id),
+            ).fetchall()
+            for r in existing_resv:
+                bs = time_to_min(r["time"])
+                be = bs + r["duration_min"]
+                if ranges_overlap(start_min, end_min, bs, be):
+                    conn.close()
+                    return self.send_json(409, {"error": "その時間帯にはすでにご予約が入っています。先にご予約の調整をお願いします。"})
+            # 同じスタイリスト・同じ日にすでに設定されている休憩時間との重複も防ぐ。
+            for bs, be in get_break_ranges(conn, stylist_id, date):
+                if ranges_overlap(start_min, end_min, bs, be):
+                    conn.close()
+                    return self.send_json(409, {"error": "その時間帯にはすでに休憩時間が設定されています"})
+
+            break_id = db.new_id()
+            conn.execute(
+                "INSERT INTO shift_breaks (id, stylist_id, date, start_time, end_time, note, created_at) VALUES (?,?,?,?,?,?,?)",
+                (break_id, stylist_id, date, start_time, end_time, note, db.now_iso()),
+            )
+            conn.commit()
+            created = conn.execute(
+                "SELECT sb.*, s.name as stylist_name FROM shift_breaks sb JOIN stylists s ON sb.stylist_id = s.id WHERE sb.id=?",
+                (break_id,),
+            ).fetchone()
+            conn.close()
+            return self.send_json(201, {
+                "id": created["id"],
+                "stylistId": created["stylist_id"],
+                "stylistName": created["stylist_name"],
+                "date": created["date"],
+                "start": created["start_time"],
+                "end": created["end_time"],
+                "note": created["note"] or "",
+            })
 
         if path == "/api/staff/settings":
             if not self.require_staff():
@@ -1485,6 +1608,17 @@ class Handler(BaseHTTPRequestHandler):
             mid = m.group(1)
             conn = db.get_conn()
             conn.execute("DELETE FROM menu_items WHERE id=?", (mid,))
+            conn.commit()
+            conn.close()
+            return self.send_json(200, {"ok": True})
+
+        m = re.match(r"^/api/staff/shift-breaks/([\w-]+)$", path)
+        if m:
+            if not self.require_staff():
+                return
+            break_id = m.group(1)
+            conn = db.get_conn()
+            conn.execute("DELETE FROM shift_breaks WHERE id=?", (break_id,))
             conn.commit()
             conn.close()
             return self.send_json(200, {"ok": True})
@@ -1752,6 +1886,10 @@ class Handler(BaseHTTPRequestHandler):
                     if ranges_overlap(req_start, req_end, bs, be):
                         conn.close()
                         return self.send_json(409, {"error": "この時間帯はすでに予約が入っています"})
+                for bs, be in get_break_ranges(conn, stylist_id, date):
+                    if ranges_overlap(req_start, req_end, bs, be):
+                        conn.close()
+                        return self.send_json(409, {"error": "その時間帯は担当スタイリストの休憩時間のためご予約いただけません"})
 
                 cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
                 if cust:
