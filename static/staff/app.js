@@ -771,6 +771,70 @@ async function loadShift() {
     });
   });
   document.getElementById("shift-grid").innerHTML = html;
+
+  // 休憩時間設定フォームの「対象日」「スタイリスト」プルダウンは、表示中の週のデータから作る。
+  const dateSel = document.getElementById("sb-date");
+  if (dateSel) {
+    const prevDate = dateSel.value;
+    dateSel.innerHTML = data.days.map(d => `<option value="${d}">${d.slice(5).replace("-", "/")}（${["日", "月", "火", "水", "木", "金", "土"][new Date(d + "T00:00:00").getDay()]}）</option>`).join("");
+    if (data.days.includes(prevDate)) dateSel.value = prevDate;
+  }
+  const stylistSel = document.getElementById("sb-stylist");
+  if (stylistSel) {
+    const prevStylist = stylistSel.value;
+    stylistSel.innerHTML = data.grid.map(row => `<option value="${row.stylistId}">${row.name}</option>`).join("");
+    if (data.grid.some(row => row.stylistId === prevStylist)) stylistSel.value = prevStylist;
+  }
+  renderShiftBreaks(data.breaks || []);
+}
+
+function renderShiftBreaks(breaks) {
+  const box = document.getElementById("shift-breaks-list");
+  if (!box) return;
+  if (!breaks.length) {
+    box.innerHTML = `<div style="font-size:12px;color:var(--text-muted);">この週に登録されている休憩時間はありません。</div>`;
+    return;
+  }
+  const dow = ["日", "月", "火", "水", "木", "金", "土"];
+  box.innerHTML = breaks.map(b => {
+    const label = `${b.date.slice(5).replace("-", "/")}（${dow[new Date(b.date + "T00:00:00").getDay()]}） ${b.stylistName}：${b.start}〜${b.end}${b.note ? "　" + escapeHtml(b.note) : ""}`;
+    return `
+    <div style="display:flex;align-items:center;justify-content:space-between;background:var(--brand-tint);border-radius:10px;padding:8px 12px;font-size:13px;">
+      <span>${label}</span>
+      <button onclick="deleteShiftBreak('${b.id}')" style="background:none;border:none;color:var(--critical);font-size:12px;cursor:pointer;">削除</button>
+    </div>`;
+  }).join("");
+}
+
+function showSBMsg(text) {
+  const errBox = document.getElementById("sb-error");
+  errBox.textContent = text;
+  errBox.classList.add("show");
+}
+async function addShiftBreak() {
+  document.getElementById("sb-error").classList.remove("show");
+  const stylistId = document.getElementById("sb-stylist").value;
+  const date = document.getElementById("sb-date").value;
+  const start = document.getElementById("sb-start").value;
+  const end = document.getElementById("sb-end").value;
+  const note = document.getElementById("sb-note").value.trim();
+  if (!stylistId || !date || !start || !end) {
+    showSBMsg("対象日・スタイリスト・開始時刻・終了時刻をすべて入力してください。");
+    return;
+  }
+  try {
+    await api("/api/staff/shift-breaks", { method: "POST", body: JSON.stringify({ stylistId, date, start, end, note }) });
+    document.getElementById("sb-start").value = "";
+    document.getElementById("sb-end").value = "";
+    document.getElementById("sb-note").value = "";
+    loadShift();
+  } catch (e) {
+    showSBMsg(e.message || "休憩時間の登録に失敗しました");
+  }
+}
+async function deleteShiftBreak(id) {
+  await api(`/api/staff/shift-breaks/${id}`, { method: "DELETE" });
+  loadShift();
 }
 async function cycleShift(stylistId, date, currentLabel) {
   const idx = SHIFT_CYCLE.indexOf(currentLabel);

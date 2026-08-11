@@ -178,6 +178,37 @@
           <p style="font-size:11.5px;color:var(--text-muted);margin-top:0;">セルをクリックすると 休み → 9-18 → 10-19 の順で切り替わります（実際にサーバーへ保存されます）</p>
           <div class="shift-grid" id="shift-grid"></div>
         </div>
+        <div class="panel-card">
+          <h3>休憩時間の設定</h3>
+          <p style="font-size:11.5px;color:var(--text-muted);margin-top:-8px;">買い物・お昼休憩など、勤務時間中に予約を入れさせない時間帯を設定できます（表示中の週のみ設定できます）。</p>
+          <div class="error-banner" id="sb-error"></div>
+          <div class="field-row">
+            <div class="field">
+              <label>対象日</label>
+              <select id="sb-date"></select>
+            </div>
+            <div class="field">
+              <label>スタイリスト</label>
+              <select id="sb-stylist"></select>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>開始時刻</label>
+              <input type="time" id="sb-start">
+            </div>
+            <div class="field">
+              <label>終了時刻</label>
+              <input type="time" id="sb-end">
+            </div>
+          </div>
+          <div class="field">
+            <label>メモ（任意）</label>
+            <input type="text" id="sb-note" placeholder="例：買い物、休憩">
+          </div>
+          <button class="btn-primary" onclick="addShiftBreak()">この休憩時間を登録する</button>
+          <div id="shift-breaks-list" style="margin-top:16px;display:flex;flex-direction:column;gap:8px;"></div>
+        </div>
       </div>
 
       <div class="staff-panel" id="s-menu">
