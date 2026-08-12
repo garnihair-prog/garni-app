@@ -780,8 +780,12 @@ class Handler(BaseHTTPRequestHandler):
             if not self.require_staff():
                 return
             conn = db.get_conn()
+            # 「最終来店」は実際に来店済み（施術完了）の予約日のみを対象にする。
+            # 来店前（対応待ち）やキャンセルの予約日を含めると、まだ来店していないのに
+            # 「最終来店」と表示されてしまい、顧客カルテの来店履歴（来店済みの予約のみ）と
+            # 食い違うため。
             rows = conn.execute(
-                """SELECT c.*, (SELECT MAX(date) FROM reservations r WHERE r.customer_id=c.id) as last_visit
+                """SELECT c.*, (SELECT MAX(date) FROM reservations r WHERE r.customer_id=c.id AND r.status='visited') as last_visit
                    FROM customers c WHERE c.archived_at IS NULL ORDER BY last_visit DESC"""
             ).fetchall()
             conn.close()
