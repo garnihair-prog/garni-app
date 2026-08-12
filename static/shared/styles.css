@@ -276,6 +276,29 @@ select.status-select { font-size: 12px; padding: 5px 8px; border-radius: 7px; bo
 .karte-history .kh-menu { font-size: 13px; font-weight: 700; margin: 2px 0; }
 .karte-history .kh-memo { font-size: 12px; color: var(--text-secondary); }
 
+/* 顧客カルテ：来店記録を1件ずつ切り替えて表示する形式（左：記録一覧／右：選択中の記録の詳細） */
+.karte-history-wrap { display: grid; grid-template-columns: 190px 1fr; gap: 16px; margin-top: 14px; }
+.karte-record-list { max-height: 520px; overflow-y: auto; border-right: 1px solid var(--gridline); padding-right: 10px; }
+.karte-record-row { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; }
+.karte-record-row:hover, .karte-record-row.sel { background: var(--brand-tint); }
+.karte-record-row .kr-date { font-size: 12px; font-weight: 700; }
+.karte-record-row .kr-menu { font-size: 11px; color: var(--text-muted); }
+
+.karte-entry-detail { min-width: 0; }
+.ked-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.ked-date { font-size: 12px; color: var(--text-muted); font-weight: 700; }
+.ked-menu { font-size: 14px; font-weight: 700; }
+.ked-memo { font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+
+.karte-photo-pair-lg { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+.karte-photo-pair-lg .ph-col-lg { flex: 1; min-width: 220px; }
+.karte-photo-pair-lg .ph-label { font-size: 11px; color: var(--text-muted); font-weight: 600; margin-bottom: 4px; }
+.karte-photo-lg { display: block; width: 100%; height: 260px; object-fit: cover; border-radius: 12px; border: 1px solid var(--border); }
+.karte-photo-empty { display: flex; align-items: center; justify-content: center; height: 260px; background: var(--page-plane); color: var(--text-muted); font-size: 12px; text-align: center; border-radius: 12px; border: 1px dashed var(--border); box-sizing: border-box; }
+
+.karte-medicine-form { background: var(--page-plane); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.karte-medicine-form .km-title { font-size: 12.5px; font-weight: 700; margin-bottom: 8px; }
+
 .shift-grid { display: grid; grid-template-columns: 110px repeat(7, 1fr); gap: 6px; font-size: 11.5px; }
 .shift-grid .hd { text-align: center; font-weight: 700; color: var(--text-muted); padding: 6px 2px; border-radius: 8px; }
 .shift-grid .hd.hd-closed { background: #fbeaea; color: var(--critical); }
@@ -298,4 +321,6 @@ footer.note { margin-top: 26px; font-size: 11.5px; color: var(--text-muted); tex
   .stat-row { grid-template-columns: repeat(2, 1fr); }
   .cust-grid { grid-template-columns: 1fr; }
   .karte-summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .karte-history-wrap { grid-template-columns: 1fr; }
+  .karte-record-list { border-right: none; border-bottom: 1px solid var(--gridline); padding-right: 0; padding-bottom: 10px; max-height: 160px; }
 }
