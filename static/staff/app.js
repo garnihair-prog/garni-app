@@ -730,21 +730,31 @@ function karteEntryDetailHtml(h) {
         <div class="ph-col-lg"><div class="ph-label">お客様の希望スタイル</div>${stylePhoto}</div>
         <div class="ph-col-lg"><div class="ph-label">施術後</div>${afterPhoto}</div>
       </div>
-      <div class="karte-medicine-form">
-        <div class="km-title">使用した薬剤</div>
-        <div class="field-row">
-          <div class="field"><label>メーカー／ブランド</label><input type="text" id="km-maker-${h.id}" value="${escapeHtml(h.medicine_maker || "")}"></div>
-          <div class="field"><label>商品名</label><input type="text" id="km-product-${h.id}" value="${escapeHtml(h.medicine_product || "")}"></div>
-        </div>
-        <div class="field-row">
-          <div class="field"><label>レベル（号数）</label><input type="text" id="km-level-${h.id}" value="${escapeHtml(h.medicine_level || "")}"></div>
-          <div class="field"><label>配合／比率</label><input type="text" id="km-ratio-${h.id}" value="${escapeHtml(h.medicine_ratio || "")}"></div>
-        </div>
-        <div class="field"><label>薬剤メモ</label><input type="text" id="km-memo-${h.id}" value="${escapeHtml(h.medicine_memo || "")}" placeholder="例：根元のみ、放置15分など"></div>
-        <div class="error-banner" id="km-error-${h.id}"></div>
-        <button class="btn-ghost" style="width:auto;padding:8px 16px;border:1px solid var(--brand);border-radius:8px;color:var(--brand-dark);font-weight:700;" onclick="saveKarteMedicine('${h.id}')">薬剤情報を保存</button>
-      </div>
+      ${karteMedicineFormHtml(h, "perm", "パーマで使用した薬剤")}
+      ${karteMedicineFormHtml(h, "color", "カラーで使用した薬剤")}
+      <div class="error-banner" id="km-error-${h.id}"></div>
+      <button class="btn-ghost" style="width:auto;padding:8px 16px;border:1px solid var(--brand);border-radius:8px;color:var(--brand-dark);font-weight:700;" onclick="saveKarteMedicine('${h.id}')">薬剤情報を保存</button>
     </div>`;
+}
+
+// 「使用した薬剤」欄（パーマ用・カラー用で共通のフォーム）。
+// kind: "perm" または "color"。フィールドidの接頭辞は km<p|c>- とする（例: kmp-maker-, kmc-maker-）。
+function karteMedicineFormHtml(h, kind, title) {
+  const short = kind === "perm" ? "kmp" : "kmc";
+  const val = (suffix) => escapeHtml(h[`${kind}_medicine_${suffix}`] || "");
+  return `
+      <div class="karte-medicine-form">
+        <div class="km-title">${title}</div>
+        <div class="field-row">
+          <div class="field"><label>メーカー／ブランド</label><input type="text" id="${short}-maker-${h.id}" value="${val("maker")}"></div>
+          <div class="field"><label>商品名</label><input type="text" id="${short}-product-${h.id}" value="${val("product")}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>レベル（号数）</label><input type="text" id="${short}-level-${h.id}" value="${val("level")}"></div>
+          <div class="field"><label>配合／比率</label><input type="text" id="${short}-ratio-${h.id}" value="${val("ratio")}"></div>
+        </div>
+        <div class="field"><label>薬剤メモ</label><input type="text" id="${short}-memo-${h.id}" value="${val("memo")}" placeholder="例：根元のみ、放置15分など"></div>
+      </div>`;
 }
 
 async function saveKarteMedicine(id) {
@@ -754,11 +764,16 @@ async function saveKarteMedicine(id) {
     await api(`/api/staff/karte/${id}`, {
       method: "PATCH",
       body: JSON.stringify({
-        medicineMaker: document.getElementById(`km-maker-${id}`).value.trim(),
-        medicineProduct: document.getElementById(`km-product-${id}`).value.trim(),
-        medicineLevel: document.getElementById(`km-level-${id}`).value.trim(),
-        medicineRatio: document.getElementById(`km-ratio-${id}`).value.trim(),
-        medicineMemo: document.getElementById(`km-memo-${id}`).value.trim(),
+        permMedicineMaker: document.getElementById(`kmp-maker-${id}`).value.trim(),
+        permMedicineProduct: document.getElementById(`kmp-product-${id}`).value.trim(),
+        permMedicineLevel: document.getElementById(`kmp-level-${id}`).value.trim(),
+        permMedicineRatio: document.getElementById(`kmp-ratio-${id}`).value.trim(),
+        permMedicineMemo: document.getElementById(`kmp-memo-${id}`).value.trim(),
+        colorMedicineMaker: document.getElementById(`kmc-maker-${id}`).value.trim(),
+        colorMedicineProduct: document.getElementById(`kmc-product-${id}`).value.trim(),
+        colorMedicineLevel: document.getElementById(`kmc-level-${id}`).value.trim(),
+        colorMedicineRatio: document.getElementById(`kmc-ratio-${id}`).value.trim(),
+        colorMedicineMemo: document.getElementById(`kmc-memo-${id}`).value.trim(),
       }),
     });
     if (selectedCustomerId) {
