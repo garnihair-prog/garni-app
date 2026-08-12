@@ -798,7 +798,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
                 return self.send_json(404, {"error": "not found"})
             karte = conn.execute(
-                "SELECT k.*, r.style_photo_path as style_photo_path FROM karte_entries k "
+                "SELECT k.*, r.style_photo_path as style_photo_path, r.total_price as total_price FROM karte_entries k "
                 "LEFT JOIN reservations r ON k.reservation_id = r.id "
                 "WHERE k.customer_id=? ORDER BY k.date DESC",
                 (cid,),
