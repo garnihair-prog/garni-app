@@ -230,8 +230,40 @@ function referralCouponCellHtml(r) {
   }
   return "";
 }
+// 予約一覧の日付選択（ブラウザ標準のカレンダー）には曜日ごとの色分けなどができないため、
+// 定休日・臨時休業日の情報を別途取得し、選択中の日付が休みの場合はテキストで明示する。
+let CLOSED_INFO = null; // { closedWeekdays: Set<number>, closedDates: Set<string> }
+const WEEKDAY_LABELS_JA = ["日", "月", "火", "水", "木", "金", "土"];
+async function ensureClosedInfoLoaded() {
+  if (CLOSED_INFO) return CLOSED_INFO;
+  const settings = await api("/api/staff/settings");
+  CLOSED_INFO = {
+    closedWeekdays: new Set(settings.closedWeekdays || []),
+    closedDates: new Set(settings.closedDates || []),
+  };
+  const weeklyNote = document.getElementById("reserve-closed-weekly-note");
+  if (weeklyNote) {
+    const labels = [...CLOSED_INFO.closedWeekdays].sort().map(w => WEEKDAY_LABELS_JA[w] + "曜日");
+    weeklyNote.textContent = labels.length ? `定休日：${labels.join("・")}` : "";
+  }
+  return CLOSED_INFO;
+}
 async function loadReserveDate() {
   const date = document.getElementById("reserve-date").value || todayISO();
+  const closedInfo = await ensureClosedInfoLoaded();
+  const closedNote = document.getElementById("reserve-date-closed-note");
+  if (closedNote) {
+    const weekday = new Date(date + "T00:00:00").getDay();
+    if (closedInfo.closedDates.has(date)) {
+      closedNote.textContent = "この日は臨時休業日です";
+      closedNote.style.display = "block";
+    } else if (closedInfo.closedWeekdays.has(weekday)) {
+      closedNote.textContent = `この日は定休日です（${WEEKDAY_LABELS_JA[weekday]}曜日）`;
+      closedNote.style.display = "block";
+    } else {
+      closedNote.style.display = "none";
+    }
+  }
   const rows = await api(`/api/staff/reservations?date=${date}`);
   const showCancelled = document.getElementById("reserve-show-cancelled").checked;
   const isCancelledStatus = r => r.status === "cancel" || r.status === "no_show";
