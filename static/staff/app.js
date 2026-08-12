@@ -638,6 +638,42 @@ async function saveCustomerEdit(id) {
     }
   }
 }
+// 顧客カルテの一番上に表示する「来店サマリー」（来店回数・累計利用金額・来店頻度・よく使うメニュー）。
+// 来店履歴（karte_entries、施術が完了した予約のみ）から集計する。
+function karteSummaryHtml(data) {
+  const history = data.history || [];
+  const visitCount = history.length;
+  const totalSpend = history.reduce((sum, h) => sum + (h.total_price || 0), 0);
+
+  let freqLabel = "―";
+  if (visitCount >= 2) {
+    const dates = history.map(h => new Date(h.date + "T00:00:00")).sort((a, b) => a - b);
+    const totalDays = (dates[dates.length - 1] - dates[0]) / (1000 * 60 * 60 * 24);
+    const avgDays = totalDays / (visitCount - 1);
+    freqLabel = avgDays >= 1 ? `約${Math.round(avgDays)}日に1回` : "同日に複数回";
+  }
+
+  let favoriteMenu = "―";
+  if (visitCount > 0) {
+    const counts = {};
+    history.forEach(h => {
+      (h.menu_names || "").split("・").filter(Boolean).forEach(name => {
+        counts[name] = (counts[name] || 0) + 1;
+      });
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (sorted.length) favoriteMenu = sorted[0][0];
+  }
+
+  return `
+    <div class="karte-summary-grid">
+      <div class="karte-summary-tile"><div class="label">来店回数</div><div class="value">${visitCount}回</div></div>
+      <div class="karte-summary-tile"><div class="label">累計利用金額</div><div class="value">¥${totalSpend.toLocaleString()}</div></div>
+      <div class="karte-summary-tile"><div class="label">来店頻度</div><div class="value" style="font-size:14px;">${freqLabel}</div></div>
+      <div class="karte-summary-tile"><div class="label">よく使うメニュー</div><div class="value" style="font-size:14px;">${escapeHtml(favoriteMenu)}</div></div>
+    </div>`;
+}
+
 function renderKarteDetail() {
   const data = currentKarteData;
   if (!data) return;
@@ -666,6 +702,7 @@ function renderKarteDetail() {
     </div>
     <div class="error-banner" id="karte-msg"></div>
     <div class="error-banner" id="karte-edit-msg"></div>
+    ${karteSummaryHtml(data)}
     ${referralInfoHtml(data)}
     ${consentInfoHtml(data)}
     <div class="karte-history">
