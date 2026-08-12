@@ -1138,8 +1138,8 @@ class Handler(BaseHTTPRequestHandler):
                         referred_by = referrer["id"]
                         referral_applied = True
                 conn.execute(
-                    "INSERT INTO customers (id, name, phone, rank, points, gender, age, referred_by_customer_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (customer_id, name, phone, "新規", 0, gender, age, referred_by, db.now_iso()),
+                    "INSERT INTO customers (id, name, phone, rank, points, gender, age, referred_by_customer_id, customer_code, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (customer_id, name, phone, "新規", 0, gender, age, referred_by, db.generate_customer_code(conn), db.now_iso()),
                 )
 
             companions_json = json.dumps(companions_out, ensure_ascii=False) if companions_out else None
@@ -1305,8 +1305,8 @@ class Handler(BaseHTTPRequestHandler):
                         referred_by = referrer["id"]
                         referral_applied = True
                 conn.execute(
-                    "INSERT INTO customers (id, name, phone, rank, points, gender, age, referred_by_customer_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (customer_id, name, phone, "新規", 0, gender, age, referred_by, db.now_iso()),
+                    "INSERT INTO customers (id, name, phone, rank, points, gender, age, referred_by_customer_id, customer_code, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (customer_id, name, phone, "新規", 0, gender, age, referred_by, db.generate_customer_code(conn), db.now_iso()),
                 )
 
             companions_json = json.dumps(companions_out, ensure_ascii=False) if companions_out else None
@@ -1613,6 +1613,31 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return self.send_json(200, row_to_dict(row))
 
+        m = re.match(r"^/api/staff/karte/([\w-]+)$", path)
+        if m:
+            # 来店履歴（カルテ）の「使用した薬剤」欄（メーカー・商品名・レベル・配合／比率・メモ）を更新する。
+            if not self.require_staff():
+                return
+            kid = m.group(1)
+            conn = db.get_conn()
+            existing = conn.execute("SELECT * FROM karte_entries WHERE id=?", (kid,)).fetchone()
+            if not existing:
+                conn.close()
+                return self.send_json(404, {"error": "not found"})
+            medicine_maker = (body.get("medicineMaker") or "").strip()
+            medicine_product = (body.get("medicineProduct") or "").strip()
+            medicine_level = (body.get("medicineLevel") or "").strip()
+            medicine_ratio = (body.get("medicineRatio") or "").strip()
+            medicine_memo = (body.get("medicineMemo") or "").strip()
+            conn.execute(
+                "UPDATE karte_entries SET medicine_maker=?, medicine_product=?, medicine_level=?, medicine_ratio=?, medicine_memo=? WHERE id=?",
+                (medicine_maker, medicine_product, medicine_level, medicine_ratio, medicine_memo, kid),
+            )
+            conn.commit()
+            updated = conn.execute("SELECT * FROM karte_entries WHERE id=?", (kid,)).fetchone()
+            conn.close()
+            return self.send_json(200, row_to_dict(updated))
+
         m = re.match(r"^/api/staff/customers/([\w-]+)$", path)
         if m:
             if not self.require_staff():
@@ -1625,6 +1650,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(404, {"error": "not found"})
             name = (body.get("name") or "").strip()
             phone = re.sub(r"\D", "", (body.get("phone") or ""))
+            kana = (body.get("kana") or "").strip()
             if not name or not phone:
                 conn.close()
                 return self.send_json(400, {"error": "お名前と電話番号を入力してください"})
@@ -1632,7 +1658,7 @@ class Handler(BaseHTTPRequestHandler):
             if dup:
                 conn.close()
                 return self.send_json(400, {"error": "この電話番号は既に他のお客様に登録されています"})
-            conn.execute("UPDATE customers SET name=?, phone=? WHERE id=?", (name, phone, cid))
+            conn.execute("UPDATE customers SET name=?, phone=?, kana=? WHERE id=?", (name, phone, kana, cid))
             # 過去の予約記録（カルテの来店履歴・マイページ等に表示される氏名・電話番号）も新しい内容に合わせて更新する。
             # これにより、電話番号を変更した後もお客様が新しい電話番号でマイページから過去・今後の予約を
             # 変わらず確認・キャンセルできる。
@@ -1805,8 +1831,8 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     customer_id = db.new_id()
                     conn.execute(
-                        "INSERT INTO customers (id, name, phone, rank, points, gender, age, created_at) VALUES (?,?,?,?,?,?,?,?)",
-                        (customer_id, name, phone, "新規", 0, gender, age, db.now_iso()),
+                        "INSERT INTO customers (id, name, phone, rank, points, gender, age, customer_code, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (customer_id, name, phone, "新規", 0, gender, age, db.generate_customer_code(conn), db.now_iso()),
                     )
 
                 conn.execute(

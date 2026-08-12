@@ -344,6 +344,22 @@ def generate_referral_code(conn):
     return (new_id() + "000000")[:6].upper()
 
 
+def generate_customer_code(conn):
+    """新規顧客に自動採番する、店舗内で一意な顧客コード（例: 01000001）。
+    先頭2桁は店舗番号（GARNIは1店舗のため固定で'01'）、残り6桁は登録順の連番。"""
+    row = conn.execute(
+        "SELECT customer_code FROM customers WHERE customer_code IS NOT NULL "
+        "ORDER BY customer_code DESC LIMIT 1"
+    ).fetchone()
+    next_seq = 1
+    if row and row["customer_code"]:
+        try:
+            next_seq = int(row["customer_code"][2:]) + 1
+        except ValueError:
+            next_seq = 1
+    return "01" + str(next_seq).zfill(6)
+
+
 def init_db():
     conn = get_conn()
     conn.executescript(SCHEMA)
@@ -389,6 +405,31 @@ def init_db():
     karte_cols = {row["name"] for row in conn.execute("PRAGMA table_info(karte_entries)").fetchall()}
     if "photo_path" not in karte_cols:
         conn.execute("ALTER TABLE karte_entries ADD COLUMN photo_path TEXT")
+    # カルテに「使用した薬剤」欄（メーカー・商品名・レベル・配合／比率・メモ）を追加する
+    if "medicine_maker" not in karte_cols:
+        conn.execute("ALTER TABLE karte_entries ADD COLUMN medicine_maker TEXT")
+    if "medicine_product" not in karte_cols:
+        conn.execute("ALTER TABLE karte_entries ADD COLUMN medicine_product TEXT")
+    if "medicine_level" not in karte_cols:
+        conn.execute("ALTER TABLE karte_entries ADD COLUMN medicine_level TEXT")
+    if "medicine_ratio" not in karte_cols:
+        conn.execute("ALTER TABLE karte_entries ADD COLUMN medicine_ratio TEXT")
+    if "medicine_memo" not in karte_cols:
+        conn.execute("ALTER TABLE karte_entries ADD COLUMN medicine_memo TEXT")
+    # 顧客カルテに「顧客コード」「フリガナ」欄を追加する
+    if "customer_code" not in cust_cols:
+        conn.execute("ALTER TABLE customers ADD COLUMN customer_code TEXT")
+    if "kana" not in cust_cols:
+        conn.execute("ALTER TABLE customers ADD COLUMN kana TEXT")
+    # 顧客コードが未発行の既存顧客（この機能の追加前から登録されている顧客）に、登録順で発行する
+    no_customer_code_rows = conn.execute(
+        "SELECT id FROM customers WHERE customer_code IS NULL ORDER BY created_at"
+    ).fetchall()
+    for row in no_customer_code_rows:
+        conn.execute(
+            "UPDATE customers SET customer_code=? WHERE id=?",
+            (generate_customer_code(conn), row["id"]),
+        )
     # 既存DBに menu_items.price_is_from / student_discount 列が無ければ追加する（旧バージョンからの移行）
     menu_cols = {row["name"] for row in conn.execute("PRAGMA table_info(menu_items)").fetchall()}
     if "price_is_from" not in menu_cols:
