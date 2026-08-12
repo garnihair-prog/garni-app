@@ -20,6 +20,14 @@ async function api(path, options) {
   const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, options || {}));
   let data = null;
   try { data = await res.json(); } catch (e) { /* noop */ }
+  if (res.status === 401 && path !== "/api/me" && path !== "/api/login") {
+    // ログインセッションが切れている状態（サーバーの再起動・アプリの更新などで、ログイン状態の
+    // 記録が失われた場合など）。そのまま操作を続けると、画面に何も表示されない・反応しないなど
+    // わかりにくい形で失敗してしまうため、はっきりと伝えてログイン画面に戻す。
+    alert("ログインの状態が切れました。もう一度ログインしてください。");
+    location.reload();
+    throw new Error("ログインの状態が切れました");
+  }
   if (!res.ok) {
     const err = new Error((data && data.error) || "エラーが発生しました");
     err.status = res.status;
