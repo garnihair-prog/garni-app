@@ -752,25 +752,11 @@ async function uploadKartePhoto(karteId, input) {
   }
 }
 
-/* ---------------- SHIFT ---------------- */
-const SHIFT_CYCLE = ["off", "9-18", "10-19"];
+/* ---------------- SHIFT（休憩時間の設定） ---------------- */
+// スタイリストごとの勤務日・時間帯の個別シフト設定は廃止し、営業時間中は常に稼働している前提にした。
+// 定休日・臨時休業日・営業時間は「設定」画面で管理し、ここでは休憩時間の設定のみを行う。
 async function loadShift() {
   const data = await api(`/api/staff/shifts?weekStart=${currentWeekStart}`);
-  const dayInfo = data.dayInfo || data.days.map(d => ({ date: d, closedWeekday: false, closedDate: false }));
-  let html = `<div class="hd"></div>` + dayInfo.map(info => {
-    const label = info.date.slice(5).replace("-", "/");
-    if (info.closedDate) return `<div class="hd hd-closed">${label}<br>臨時休業</div>`;
-    if (info.closedWeekday) return `<div class="hd hd-closed">${label}<br>定休日</div>`;
-    return `<div class="hd">${label}</div>`;
-  }).join("");
-  data.grid.forEach(row => {
-    html += `<div class="nm-cell"><div class="av2">${row.name[0]}</div>${row.name}</div>`;
-    row.cells.forEach(c => {
-      const off = c.label === "off";
-      html += `<button class="shift-cell ${off ? "off" : "on"}" onclick="cycleShift('${row.stylistId}','${c.date}','${c.label}')">${off ? "休み" : c.label}</button>`;
-    });
-  });
-  document.getElementById("shift-grid").innerHTML = html;
 
   // 休憩時間設定フォームの「対象日」「スタイリスト」プルダウンは、表示中の週のデータから作る。
   const dateSel = document.getElementById("sb-date");
@@ -782,8 +768,8 @@ async function loadShift() {
   const stylistSel = document.getElementById("sb-stylist");
   if (stylistSel) {
     const prevStylist = stylistSel.value;
-    stylistSel.innerHTML = data.grid.map(row => `<option value="${row.stylistId}">${row.name}</option>`).join("");
-    if (data.grid.some(row => row.stylistId === prevStylist)) stylistSel.value = prevStylist;
+    stylistSel.innerHTML = data.stylists.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
+    if (data.stylists.some(s => s.id === prevStylist)) stylistSel.value = prevStylist;
   }
   renderShiftBreaks(data.breaks || []);
 }
@@ -834,12 +820,6 @@ async function addShiftBreak() {
 }
 async function deleteShiftBreak(id) {
   await api(`/api/staff/shift-breaks/${id}`, { method: "DELETE" });
-  loadShift();
-}
-async function cycleShift(stylistId, date, currentLabel) {
-  const idx = SHIFT_CYCLE.indexOf(currentLabel);
-  const next = SHIFT_CYCLE[(idx + 1) % SHIFT_CYCLE.length];
-  await api("/api/staff/shifts", { method: "POST", body: JSON.stringify({ stylistId, date, label: next }) });
   loadShift();
 }
 function shiftWeek(days) {

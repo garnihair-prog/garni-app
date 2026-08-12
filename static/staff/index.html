@@ -169,18 +169,13 @@
       <div class="staff-panel" id="s-shift">
         <div class="panel-card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-            <h3 style="margin:0;">週間シフト</h3>
+            <h3 style="margin:0;">休憩時間の設定</h3>
             <div>
               <button class="btn-ghost" style="width:auto;display:inline;" onclick="shiftWeek(-7)">← 前週</button>
               <button class="btn-ghost" style="width:auto;display:inline;" onclick="shiftWeek(7)">次週 →</button>
             </div>
           </div>
-          <p style="font-size:11.5px;color:var(--text-muted);margin-top:0;">セルをクリックすると 休み → 9-18 → 10-19 の順で切り替わります（実際にサーバーへ保存されます）</p>
-          <div class="shift-grid" id="shift-grid"></div>
-        </div>
-        <div class="panel-card">
-          <h3>休憩時間の設定</h3>
-          <p style="font-size:11.5px;color:var(--text-muted);margin-top:-8px;">買い物・お昼休憩など、勤務時間中に予約を入れさせない時間帯を設定できます（表示中の週のみ設定できます）。</p>
+          <p style="font-size:11.5px;color:var(--text-muted);margin-top:-8px;">スタイリストは営業時間中は常に稼働している前提です。定休日・臨時休業日・営業時間の変更は「設定」画面で管理してください。ここでは、買い物・お昼休憩など、営業時間中に予約を入れさせない時間帯だけを設定できます（表示中の週のみ設定できます）。</p>
           <div class="error-banner" id="sb-error"></div>
           <div class="field-row">
             <div class="field">
