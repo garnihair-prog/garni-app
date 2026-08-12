@@ -606,6 +606,7 @@ async function loadCustomers() {
 async function selectCustomer(id) {
   selectedCustomerId = id;
   editingCustomerId = null;
+  selectedKarteEntryId = null;
   document.querySelectorAll(".cust-row").forEach(r => r.classList.remove("sel"));
   currentKarteData = await api(`/api/staff/customers/${id}`);
   renderKarteDetail();
@@ -621,6 +622,7 @@ function cancelCustomerEdit() {
 }
 async function saveCustomerEdit(id) {
   const name = document.getElementById("edit-cust-name").value.trim();
+  const kana = document.getElementById("edit-cust-kana").value.trim();
   const phone = document.getElementById("edit-cust-phone").value.trim();
   const msgBox = document.getElementById("karte-edit-msg");
   if (!name || !phone) {
@@ -628,7 +630,7 @@ async function saveCustomerEdit(id) {
     return;
   }
   try {
-    await api(`/api/staff/customers/${id}`, { method: "PATCH", body: JSON.stringify({ name, phone }) });
+    await api(`/api/staff/customers/${id}`, { method: "PATCH", body: JSON.stringify({ name, kana, phone }) });
     editingCustomerId = null;
     await selectCustomer(id);
   } catch (e) {
@@ -674,6 +676,95 @@ function karteSummaryHtml(data) {
     </div>`;
 }
 
+// 顧客カルテのメイン表示で「現在選んでいる来店履歴（1件）」のid。
+// お客様を切り替えたときは selectCustomer() 側でリセットする。
+let selectedKarteEntryId = null;
+
+function selectKarteEntry(id) {
+  selectedKarteEntryId = id;
+  renderKarteDetail();
+}
+
+function karteRecordListHtml(history, selectedId) {
+  if (!history.length) return "";
+  return `
+    <div class="karte-record-list">
+      ${history.map(h => `
+        <div class="karte-record-row ${h.id === selectedId ? "sel" : ""}" onclick="selectKarteEntry('${h.id}')">
+          <span class="kr-date">${h.date}</span>
+          <span class="kr-menu">${escapeHtml(h.menu_names)}</span>
+        </div>`).join("")}
+    </div>`;
+}
+
+function karteLargePhotoHtml(path, label, emptyHtml) {
+  if (path) {
+    return `<a href="${path}" target="_blank" rel="noopener"><img class="karte-photo-lg" src="${path}" alt="${label}"></a>`;
+  }
+  return emptyHtml;
+}
+
+function karteEntryDetailHtml(h) {
+  const stylePhoto = karteLargePhotoHtml(h.style_photo_path, "お客様の希望スタイル",
+    `<div class="karte-photo-lg karte-photo-empty">写真なし</div>`);
+  const afterPhoto = karteLargePhotoHtml(h.photo_path, "施術後",
+    `<label class="karte-photo-lg karte-photo-empty" style="cursor:pointer;">＋ 施術後の写真を追加
+      <input type="file" accept="image/*" capture="environment" style="display:none;" onchange="uploadKartePhoto('${h.id}', this)">
+    </label>`);
+  return `
+    <div class="karte-entry-detail">
+      <div class="ked-head">
+        <div class="ked-date">${h.date}</div>
+        <div class="ked-menu">${escapeHtml(h.menu_names)}</div>
+      </div>
+      ${h.memo ? `<div class="ked-memo">${escapeHtml(h.memo)}</div>` : ""}
+      <div class="karte-photo-pair-lg">
+        <div class="ph-col-lg"><div class="ph-label">お客様の希望スタイル</div>${stylePhoto}</div>
+        <div class="ph-col-lg"><div class="ph-label">施術後</div>${afterPhoto}</div>
+      </div>
+      <div class="karte-medicine-form">
+        <div class="km-title">使用した薬剤</div>
+        <div class="field-row">
+          <div class="field"><label>メーカー／ブランド</label><input type="text" id="km-maker-${h.id}" value="${escapeHtml(h.medicine_maker || "")}"></div>
+          <div class="field"><label>商品名</label><input type="text" id="km-product-${h.id}" value="${escapeHtml(h.medicine_product || "")}"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>レベル（号数）</label><input type="text" id="km-level-${h.id}" value="${escapeHtml(h.medicine_level || "")}"></div>
+          <div class="field"><label>配合／比率</label><input type="text" id="km-ratio-${h.id}" value="${escapeHtml(h.medicine_ratio || "")}"></div>
+        </div>
+        <div class="field"><label>薬剤メモ</label><input type="text" id="km-memo-${h.id}" value="${escapeHtml(h.medicine_memo || "")}" placeholder="例：根元のみ、放置15分など"></div>
+        <div class="error-banner" id="km-error-${h.id}"></div>
+        <button class="btn-ghost" style="width:auto;padding:8px 16px;border:1px solid var(--brand);border-radius:8px;color:var(--brand-dark);font-weight:700;" onclick="saveKarteMedicine('${h.id}')">薬剤情報を保存</button>
+      </div>
+    </div>`;
+}
+
+async function saveKarteMedicine(id) {
+  const errBox = document.getElementById(`km-error-${id}`);
+  if (errBox) errBox.classList.remove("show");
+  try {
+    await api(`/api/staff/karte/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        medicineMaker: document.getElementById(`km-maker-${id}`).value.trim(),
+        medicineProduct: document.getElementById(`km-product-${id}`).value.trim(),
+        medicineLevel: document.getElementById(`km-level-${id}`).value.trim(),
+        medicineRatio: document.getElementById(`km-ratio-${id}`).value.trim(),
+        medicineMemo: document.getElementById(`km-memo-${id}`).value.trim(),
+      }),
+    });
+    if (selectedCustomerId) {
+      currentKarteData = await api(`/api/staff/customers/${selectedCustomerId}`);
+      renderKarteDetail();
+    }
+  } catch (e) {
+    if (errBox) {
+      errBox.textContent = e.message || "保存に失敗しました";
+      errBox.classList.add("show");
+    }
+  }
+}
+
 function renderKarteDetail() {
   const data = currentKarteData;
   if (!data) return;
@@ -681,7 +772,9 @@ function renderKarteDetail() {
   const isEditing = editingCustomerId === c.id;
   const headerHtml = isEditing ? `
       <div style="flex:1;">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">顧客コード：${escapeHtml(c.customer_code || "―")}</div>
         <input id="edit-cust-name" type="text" value="${escapeHtml(c.name)}" placeholder="お名前" style="font-weight:700;font-size:14px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;box-sizing:border-box;">
+        <input id="edit-cust-kana" type="text" value="${escapeHtml(c.kana || "")}" placeholder="フリガナ" style="font-size:13px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;box-sizing:border-box;">
         <input id="edit-cust-phone" type="tel" value="${escapeHtml(c.phone)}" placeholder="電話番号" style="font-size:13px;width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:8px;box-sizing:border-box;">
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;flex:0 0 auto;">
@@ -689,13 +782,27 @@ function renderKarteDetail() {
         <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;" onclick="cancelCustomerEdit()">キャンセル</button>
       </div>` : `
       <div>
+        <div style="font-size:11px;color:var(--text-muted);">顧客コード：${escapeHtml(c.customer_code || "―")}</div>
         <div style="font-weight:700;font-size:15px;">${escapeHtml(c.name)}</div>
+        ${c.kana ? `<div style="font-size:11px;color:var(--text-muted);">${escapeHtml(c.kana)}</div>` : ""}
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">${escapeHtml(c.rank)} ／ 電話：${escapeHtml(c.phone)} ／ ${c.points}pt</div>
       </div>
       <div style="display:flex;gap:6px;flex:0 0 auto;">
         <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;" onclick="startEditCustomer('${c.id}')">編集</button>
         <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--critical);border-radius:8px;color:var(--critical);font-size:11.5px;" onclick="deleteCustomer('${c.id}', '${c.name.replace(/'/g, "\\'")}')">お客様を削除</button>
       </div>`;
+
+  const history = data.history || [];
+  if (!history.some(h => h.id === selectedKarteEntryId)) {
+    selectedKarteEntryId = history.length ? history[0].id : null;
+  }
+  const selectedEntry = history.find(h => h.id === selectedKarteEntryId);
+  const historySectionHtml = history.length ? `
+    <div class="karte-history-wrap">
+      ${karteRecordListHtml(history, selectedKarteEntryId)}
+      ${selectedEntry ? karteEntryDetailHtml(selectedEntry) : ""}
+    </div>` : `<div style="font-size:12px;color:var(--text-muted);">来店履歴はまだありません</div>`;
+
   document.getElementById("karte-detail").innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;">
       ${headerHtml}
@@ -705,27 +812,7 @@ function renderKarteDetail() {
     ${karteSummaryHtml(data)}
     ${referralInfoHtml(data)}
     ${consentInfoHtml(data)}
-    <div class="karte-history">
-      ${data.history.map(h => `
-        <div class="kh-item">
-          <div class="kh-date">${h.date}</div>
-          <div class="kh-menu">${h.menu_names}</div>
-          <div class="kh-memo">${h.memo || "（メモなし）"}</div>
-          <div class="photo-pair">
-            <div class="ph-col">
-              <div class="ph-label">お客様の希望スタイル</div>
-              ${h.style_photo_path ? `<a href="${h.style_photo_path}" target="_blank" rel="noopener"><img class="thumb-lg" src="${h.style_photo_path}"></a>` : `<span style="font-size:11px;color:var(--text-muted);">写真なし</span>`}
-            </div>
-            <div class="ph-col">
-              <div class="ph-label">施術後</div>
-              ${h.photo_path ? `<a href="${h.photo_path}" target="_blank" rel="noopener"><img class="thumb-lg" src="${h.photo_path}"></a>` : `
-                <label class="photo-upload-btn">＋ 施術後の写真を追加
-                  <input type="file" accept="image/*" capture="environment" onchange="uploadKartePhoto('${h.id}', this)">
-                </label>`}
-            </div>
-          </div>
-        </div>`).join("") || `<div style="font-size:12px;color:var(--text-muted);">来店履歴はまだありません</div>`}
-    </div>`;
+    ${historySectionHtml}`;
 }
 
 async function deleteCustomer(id, name) {
