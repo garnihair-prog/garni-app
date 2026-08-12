@@ -593,7 +593,7 @@ async function loadCustomers() {
   const rows = await api("/api/staff/customers");
   document.getElementById("cust-list").innerHTML = rows.map(c => `
     <div class="cust-row ${c.id === selectedCustomerId ? "sel" : ""}" onclick="selectCustomer('${c.id}')">
-      <div><div class="nm">${c.name}</div><div class="lv">${c.rank}</div></div>
+      <div class="nm">${c.name}</div>
       <div class="lv">最終来店 ${c.last_visit || "―"}</div>
     </div>`).join("");
   if (!rows.length) {
@@ -785,7 +785,7 @@ function renderKarteDetail() {
         <div style="font-size:11px;color:var(--text-muted);">顧客コード：${escapeHtml(c.customer_code || "―")}</div>
         <div style="font-weight:700;font-size:15px;">${escapeHtml(c.name)}</div>
         ${c.kana ? `<div style="font-size:11px;color:var(--text-muted);">${escapeHtml(c.kana)}</div>` : ""}
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">${escapeHtml(c.rank)} ／ 電話：${escapeHtml(c.phone)} ／ ${c.points}pt</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">電話：${escapeHtml(c.phone)} ／ ${c.points}pt</div>
       </div>
       <div style="display:flex;gap:6px;flex:0 0 auto;">
         <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;" onclick="startEditCustomer('${c.id}')">編集</button>
