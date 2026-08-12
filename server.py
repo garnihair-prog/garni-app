@@ -50,9 +50,6 @@ MAX_PHOTO_BYTES = 6 * 1024 * 1024  # 6MB（アップロード前にブラウザ�
 
 STAFF_PASSWORD = os.environ.get("GARNI_STAFF_PASSWORD", "garni2026")
 SESSIONS = {}  # token -> created_at (in-memory; MVP用。本番では永続セッションストアを推奨)
-# 個人スケジュールアプリ（my-schedule-app）へ予約状況を読み取り専用で連携するためのトークン。未設定なら無効。
-EXPORT_TOKEN = os.environ.get("GARNI_EXPORT_TOKEN")
-
 
 # 新規予約が入った際、オーナー様へメールで通知するための設定（環境変数が未設定の場合は通知を送らずスキップする）
 SMTP_HOST = os.environ.get("GARNI_SMTP_HOST", "smtp.gmail.com")
@@ -90,16 +87,6 @@ def generate_slot_times(open_min, close_min, step_min=60):
         times.append(min_to_time(t))
         t += step_min
     return times
-
-
-def parse_shift_range(label):
-    """'10-19' -> (600, 1140)。'off' や None は None を返す。"""
-    if not label or label == "off":
-        return None
-    m = re.match(r"^(\d{1,2})-(\d{1,2})$", label)
-    if not m:
-        return None
-    return int(m.group(1)) * 60, int(m.group(2)) * 60
 
 
 def ranges_overlap(a_start, a_end, b_start, b_end):
@@ -593,19 +580,6 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return self.send_json(200, rows_to_list(rows))
 
-        if path == "/api/my-schedule":
-            if not EXPORT_TOKEN or qs.get("token") != EXPORT_TOKEN:
-                return self.send_json(403, {"error": "forbidden"})
-            today = jst_today().isoformat()
-            conn = db.get_conn()
-            rows = conn.execute(
-                "SELECT date, time, duration_min, customer_name, menu_names FROM reservations "
-                "WHERE date >= ? AND status = 'wait' ORDER BY date, time",
-                (today,),
-            ).fetchall()
-            conn.close()
-            return self.send_json(200, {"reservations": rows_to_list(rows)})
-
         if path == "/api/consent-forms":
             conn = db.get_conn()
             rows = conn.execute("SELECT * FROM consent_forms ORDER BY sort_order").fetchall()
@@ -636,20 +610,10 @@ class Handler(BaseHTTPRequestHandler):
             if date in closed_dates_set(conn):
                 conn.close()
                 return self.send_json(200, {"slots": [], "reason": "closed_date"})
-            shift = conn.execute(
-                "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
-            ).fetchone()
-            if shift and shift["label"] == "off":
-                conn.close()
-                return self.send_json(200, {"slots": [], "reason": "shift_off"})
+            # スタイリストは営業時間中は常に稼働している前提（個別のシフト設定は廃止）。
+            # 開いている日かどうかは定休日・臨時休業日（上のチェック）のみで判定する。
             business_range = business_hours_range(settings)
-            shift_range = parse_shift_range(shift["label"]) if shift else business_range
-            if shift_range is None:
-                shift_range = business_range
-            open_min, close_min = shift_range
-            # 営業時間の外側にはみ出さないようクリップする
-            open_min = max(open_min, business_range[0])
-            close_min = min(close_min, business_range[1])
+            open_min, close_min = business_range
             last_order_min = effective_last_order_min(conn, settings, menu_ids)
             same_day_min = same_day_min_start_min(date)
 
@@ -869,6 +833,9 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         if path == "/api/staff/shifts":
+            # 個別のスタイリストのシフト（勤務日・時間帯）設定は廃止し、営業時間中は常に稼働している
+            # 前提にした。ここでは「休憩時間の設定」画面で必要な、表示中の週の日付一覧・スタイリスト
+            # 一覧・登録済みの休憩時間を返す。
             if not self.require_staff():
                 return
             week_start = qs.get("weekStart")
@@ -877,14 +844,8 @@ class Handler(BaseHTTPRequestHandler):
             start = datetime.date.fromisoformat(week_start)
             days = [(start + datetime.timedelta(days=i)).isoformat() for i in range(7)]
             conn = db.get_conn()
-            settings = get_settings(conn)
-            closed_weekdays = closed_weekdays_set(settings)
-            closed_dates = closed_dates_set(conn)
             stylists = conn.execute("SELECT * FROM stylists ORDER BY sort_order").fetchall()
-            shift_rows = conn.execute(
-                "SELECT * FROM shifts WHERE date IN (%s)" % ",".join("?" * len(days)), days
-            ).fetchall()
-            # 買い物・休憩などの休憩時間（表示中の週の分）。シフト表の下の一覧・削除操作に使う。
+            # 買い物・休憩などの休憩時間（表示中の週の分）。一覧・削除操作に使う。
             break_rows = conn.execute(
                 "SELECT sb.*, s.name as stylist_name FROM shift_breaks sb "
                 "JOIN stylists s ON sb.stylist_id = s.id "
@@ -892,24 +853,7 @@ class Handler(BaseHTTPRequestHandler):
                 days,
             ).fetchall()
             conn.close()
-            shift_map = {}
-            for r in shift_rows:
-                shift_map.setdefault(r["stylist_id"], {})[r["date"]] = r["label"]
-            # 定休日（曜日）・臨時休業日を、週間シフト表のヘッダーで一目でわかるようにするための付加情報。
-            day_info = [
-                {
-                    "date": d,
-                    "closedWeekday": weekday_js(d) in closed_weekdays,
-                    "closedDate": d in closed_dates,
-                }
-                for d in days
-            ]
-            grid = []
-            for s in stylists:
-                row = {"stylistId": s["id"], "name": s["name"], "cells": []}
-                for d in days:
-                    row["cells"].append({"date": d, "label": shift_map.get(s["id"], {}).get(d, "off")})
-                grid.append(row)
+            stylist_list = [{"id": s["id"], "name": s["name"]} for s in stylists]
             breaks = [
                 {
                     "id": r["id"],
@@ -922,7 +866,7 @@ class Handler(BaseHTTPRequestHandler):
                 }
                 for r in break_rows
             ]
-            return self.send_json(200, {"days": days, "dayInfo": day_info, "grid": grid, "breaks": breaks})
+            return self.send_json(200, {"days": days, "stylists": stylist_list, "breaks": breaks})
 
         if path == "/api/staff/customer-stats":
             if not self.require_staff():
@@ -1137,19 +1081,9 @@ class Handler(BaseHTTPRequestHandler):
                     "missingConsentFormIds": missing_consent_form_ids,
                 })
 
-            shift = conn.execute(
-                "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
-            ).fetchone()
-            if shift and shift["label"] == "off":
-                conn.close()
-                return self.send_json(409, {"error": "指定のスタイリストは休みの日です"})
+            # スタイリストは営業時間中は常に稼働している前提（個別のシフト設定は廃止）。
             business_range = business_hours_range(settings)
-            shift_range = parse_shift_range(shift["label"]) if shift else business_range
-            if shift_range is None:
-                shift_range = business_range
-            open_min, close_min = shift_range
-            open_min = max(open_min, business_range[0])
-            close_min = min(close_min, business_range[1])
+            open_min, close_min = business_range
             req_start = time_to_min(time_)
             req_end = req_start + total_duration
             if req_start < open_min or req_end > close_min:
@@ -1317,19 +1251,9 @@ class Handler(BaseHTTPRequestHandler):
                     total_price += comp_price
                     all_menu_ids.extend(comp_menu_ids)
 
-            shift = conn.execute(
-                "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
-            ).fetchone()
-            if shift and shift["label"] == "off":
-                conn.close()
-                return self.send_json(409, {"error": "指定のスタイリストは休みの日です"})
+            # スタイリストは営業時間中は常に稼働している前提（個別のシフト設定は廃止）。
             business_range = business_hours_range(settings)
-            shift_range = parse_shift_range(shift["label"]) if shift else business_range
-            if shift_range is None:
-                shift_range = business_range
-            open_min, close_min = shift_range
-            open_min = max(open_min, business_range[0])
-            close_min = min(close_min, business_range[1])
+            open_min, close_min = business_range
             req_start = time_to_min(time_)
             req_end = req_start + total_duration
             if req_start < open_min or req_end > close_min:
@@ -1400,27 +1324,6 @@ class Handler(BaseHTTPRequestHandler):
             created_dict["referralApplied"] = referral_applied
             return self.send_json(201, created_dict)
 
-        if path == "/api/staff/shifts":
-            if not self.require_staff():
-                return
-            stylist_id, date, label = body.get("stylistId"), body.get("date"), body.get("label")
-            if not stylist_id or not date or not label:
-                return self.send_json(400, {"error": "入力が不足しています"})
-            conn = db.get_conn()
-            existing = conn.execute(
-                "SELECT id FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
-            ).fetchone()
-            if existing:
-                conn.execute("UPDATE shifts SET label=? WHERE id=?", (label, existing["id"]))
-            else:
-                conn.execute(
-                    "INSERT INTO shifts (id, stylist_id, date, label) VALUES (?,?,?,?)",
-                    (db.new_id(), stylist_id, date, label),
-                )
-            conn.commit()
-            conn.close()
-            return self.send_json(200, {"ok": True})
-
         if path == "/api/staff/shift-breaks":
             # シフト管理画面から、買い物・休憩などのために「予約を入れさせない時間帯」を登録する。
             if not self.require_staff():
@@ -1450,21 +1353,12 @@ class Handler(BaseHTTPRequestHandler):
             if date in closed_dates_set(conn):
                 conn.close()
                 return self.send_json(409, {"error": "その日は臨時休業日です"})
-            shift = conn.execute(
-                "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
-            ).fetchone()
-            if shift and shift["label"] == "off":
-                conn.close()
-                return self.send_json(409, {"error": "その日はお休みのため、休憩時間を設定できません"})
+            # スタイリストは営業時間中は常に稼働している前提（個別のシフト設定は廃止）。
             business_range = business_hours_range(settings)
-            shift_range = parse_shift_range(shift["label"]) if shift else business_range
-            if shift_range is None:
-                shift_range = business_range
-            open_min = max(shift_range[0], business_range[0])
-            close_min = min(shift_range[1], business_range[1])
+            open_min, close_min = business_range
             if start_min < open_min or end_min > close_min:
                 conn.close()
-                return self.send_json(409, {"error": f"勤務時間（{min_to_time(open_min)}〜{min_to_time(close_min)}）の範囲内で設定してください"})
+                return self.send_json(409, {"error": f"営業時間（{min_to_time(open_min)}〜{min_to_time(close_min)}）の範囲内で設定してください"})
 
             # 既存のご予約と重複する時間帯には休憩を設定できない（先にご予約を調整してください、とする）。
             existing_resv = conn.execute(
@@ -1869,19 +1763,9 @@ class Handler(BaseHTTPRequestHandler):
                     total_duration += c.get("durationMin", 0)
                     total_price += c.get("price", 0)
 
-                shift = conn.execute(
-                    "SELECT label FROM shifts WHERE stylist_id=? AND date=?", (stylist_id, date)
-                ).fetchone()
-                if shift and shift["label"] == "off":
-                    conn.close()
-                    return self.send_json(409, {"error": "指定のスタイリストは休みの日です"})
+                # スタイリストは営業時間中は常に稼働している前提（個別のシフト設定は廃止）。
                 business_range = business_hours_range(settings)
-                shift_range = parse_shift_range(shift["label"]) if shift else business_range
-                if shift_range is None:
-                    shift_range = business_range
-                open_min, close_min = shift_range
-                open_min = max(open_min, business_range[0])
-                close_min = min(close_min, business_range[1])
+                open_min, close_min = business_range
                 req_start = time_to_min(time_)
                 req_end = req_start + total_duration
                 if req_start < open_min or req_end > close_min:
