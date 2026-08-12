@@ -638,7 +638,6 @@ async function lookupMyPage() {
     }
     document.getElementById("mypage-lookup").style.display = "none";
     document.getElementById("mypage-result").style.display = "block";
-    document.getElementById("mp-rank").textContent = "会員ランク：" + data.customer.rank;
     document.getElementById("mp-pts").textContent = data.customer.points.toLocaleString() + " pt";
     mpEditPhotos = {};
     mpReservations = data.reservations;
