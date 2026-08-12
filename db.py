@@ -416,6 +416,12 @@ def init_db():
         conn.execute("ALTER TABLE karte_entries ADD COLUMN medicine_ratio TEXT")
     if "medicine_memo" not in karte_cols:
         conn.execute("ALTER TABLE karte_entries ADD COLUMN medicine_memo TEXT")
+    # 「使用した薬剤」欄をパーマ用・カラー用に分割する（旧medicine_*列はそのまま残し、新規で入力しなおしてもらう）
+    for prefix in ("perm", "color"):
+        for suffix in ("maker", "product", "level", "ratio", "memo"):
+            col = f"{prefix}_medicine_{suffix}"
+            if col not in karte_cols:
+                conn.execute(f"ALTER TABLE karte_entries ADD COLUMN {col} TEXT")
     # 顧客カルテに「顧客コード」「フリガナ」欄を追加する
     if "customer_code" not in cust_cols:
         conn.execute("ALTER TABLE customers ADD COLUMN customer_code TEXT")

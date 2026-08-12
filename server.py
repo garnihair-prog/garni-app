@@ -1619,7 +1619,8 @@ class Handler(BaseHTTPRequestHandler):
 
         m = re.match(r"^/api/staff/karte/([\w-]+)$", path)
         if m:
-            # 来店履歴（カルテ）の「使用した薬剤」欄（メーカー・商品名・レベル・配合／比率・メモ）を更新する。
+            # 来店履歴（カルテ）の「使用した薬剤」欄（パーマ用・カラー用それぞれメーカー・商品名・
+            # レベル・配合／比率・メモ）を更新する。
             if not self.require_staff():
                 return
             kid = m.group(1)
@@ -1628,14 +1629,22 @@ class Handler(BaseHTTPRequestHandler):
             if not existing:
                 conn.close()
                 return self.send_json(404, {"error": "not found"})
-            medicine_maker = (body.get("medicineMaker") or "").strip()
-            medicine_product = (body.get("medicineProduct") or "").strip()
-            medicine_level = (body.get("medicineLevel") or "").strip()
-            medicine_ratio = (body.get("medicineRatio") or "").strip()
-            medicine_memo = (body.get("medicineMemo") or "").strip()
+            perm_maker = (body.get("permMedicineMaker") or "").strip()
+            perm_product = (body.get("permMedicineProduct") or "").strip()
+            perm_level = (body.get("permMedicineLevel") or "").strip()
+            perm_ratio = (body.get("permMedicineRatio") or "").strip()
+            perm_memo = (body.get("permMedicineMemo") or "").strip()
+            color_maker = (body.get("colorMedicineMaker") or "").strip()
+            color_product = (body.get("colorMedicineProduct") or "").strip()
+            color_level = (body.get("colorMedicineLevel") or "").strip()
+            color_ratio = (body.get("colorMedicineRatio") or "").strip()
+            color_memo = (body.get("colorMedicineMemo") or "").strip()
             conn.execute(
-                "UPDATE karte_entries SET medicine_maker=?, medicine_product=?, medicine_level=?, medicine_ratio=?, medicine_memo=? WHERE id=?",
-                (medicine_maker, medicine_product, medicine_level, medicine_ratio, medicine_memo, kid),
+                "UPDATE karte_entries SET perm_medicine_maker=?, perm_medicine_product=?, perm_medicine_level=?, "
+                "perm_medicine_ratio=?, perm_medicine_memo=?, color_medicine_maker=?, color_medicine_product=?, "
+                "color_medicine_level=?, color_medicine_ratio=?, color_medicine_memo=? WHERE id=?",
+                (perm_maker, perm_product, perm_level, perm_ratio, perm_memo,
+                 color_maker, color_product, color_level, color_ratio, color_memo, kid),
             )
             conn.commit()
             updated = conn.execute("SELECT * FROM karte_entries WHERE id=?", (kid,)).fetchone()
