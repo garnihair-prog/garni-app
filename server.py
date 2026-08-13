@@ -51,6 +51,10 @@ MAX_PHOTO_BYTES = 6 * 1024 * 1024  # 6MB（アップロード前にブラウザ�
 STAFF_PASSWORD = os.environ.get("GARNI_STAFF_PASSWORD", "garni2026")
 SESSIONS = {}  # token -> created_at (in-memory; MVP用。本番では永続セッションストアを推奨)
 
+# My Schedule（別アプリ）から予約状況を読み取り専用で取り込むためのエクスポート用トークン。
+# 未設定の場合は /api/my-schedule 自体を無効化する（誤って予約データが公開されるのを防ぐ）。
+EXPORT_TOKEN = os.environ.get("GARNI_EXPORT_TOKEN")
+
 # 新規予約が入った際、オーナー様へメールで通知するための設定（環境変数が未設定の場合は通知を送らずスキップする）
 SMTP_HOST = os.environ.get("GARNI_SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("GARNI_SMTP_PORT", "587") or "587")
@@ -718,6 +722,21 @@ class Handler(BaseHTTPRequestHandler):
                 "cancellationFeePercent": settings.get("cancellation_fee_percent", 50),
                 "cancellationFeePercentFull": settings.get("cancellation_fee_percent_full", 100),
             })
+
+        if path == "/api/my-schedule":
+            # My Schedule（別アプリ）のカレンダーに予約を読み取り専用で重ねて表示するためのエクスポートAPI。
+            # スタッフのCookie認証は使わず、環境変数 GARNI_EXPORT_TOKEN と一致するトークンをクエリで要求する。
+            if not EXPORT_TOKEN:
+                return self.send_json(404, {"error": "not found"})
+            if qs.get("token") != EXPORT_TOKEN:
+                return self.send_json(401, {"error": "invalid token"})
+            conn = db.get_conn()
+            rows = conn.execute(
+                "SELECT date, time, duration_min, customer_name, menu_names FROM reservations "
+                "WHERE status NOT IN ('cancel', 'no_show') ORDER BY date, time"
+            ).fetchall()
+            conn.close()
+            return self.send_json(200, {"reservations": rows_to_list(rows)})
 
         # ---- staff API (auth required) ----
         if path == "/api/staff/settings":
