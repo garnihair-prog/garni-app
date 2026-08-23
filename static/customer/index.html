@@ -222,11 +222,21 @@
 
       </div>
       <div class="phone-tabbar">
-        <button class="active" data-tab="c-home" onclick="showCScreen('c-home')"><span class="ic"></span>ホーム</button>
-        <button data-tab="c-menu" onclick="showCScreen('c-menu')"><span class="ic"></span>メニュー</button>
-        <button data-tab="c-date" onclick="startBooking()"><span class="ic"></span>予約</button>
-        <button data-tab="c-mypage" onclick="showCScreen('c-mypage')"><span class="ic"></span>マイページ</button>
-        <button data-tab="c-referral" onclick="showCScreen('c-referral')"><span class="ic"></span>紹介</button>
+        <button class="active" data-tab="c-home" onclick="showCScreen('c-home')">
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h4v-6h2v6h4a1 1 0 0 0 1-1v-9"/></svg></span>ホーム
+        </button>
+        <button data-tab="c-menu" onclick="showCScreen('c-menu')">
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h14"/><circle cx="5" cy="6" r="0" fill="none"/></svg></span>メニュー
+        </button>
+        <button data-tab="c-date" onclick="startBooking()">
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="15" rx="3"/><path d="M4 10h16M8 3.5v3M16 3.5v3"/><path d="M12 14v3M10.5 15.5h3"/></svg></span>予約
+        </button>
+        <button data-tab="c-mypage" onclick="showCScreen('c-mypage')">
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></svg></span>マイページ
+        </button>
+        <button data-tab="c-referral" onclick="showCScreen('c-referral')">
+          <span class="ic" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="9" width="16" height="11" rx="2"/><path d="M4 13h16"/><path d="M12 9v11"/><path d="M12 9C10.5 6 8 6 7.2 7.4S8 9 12 9Z"/><path d="M12 9c1.5-3 4-3 4.8-1.6S16 9 12 9Z"/></svg></span>紹介
+        </button>
       </div>
     </div>
   </div>
