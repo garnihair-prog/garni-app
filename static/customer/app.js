@@ -8,6 +8,7 @@ let consentQueue = [];        // このご予約で同意が必要な同意書�
 let consentIndex = 0;         // consentQueue内で、現在表示している同意書の位置
 let consentAgreedFormIds = []; // 実際に「同意します」をクリックした同意書IDのリスト（予約送信時に送信）
 let selectedMenus = new Set();
+let menuViewOnly = false; // trueの間はメニュー画面を閲覧専用にする（チェックボックス・お連れ様追加・予約へ進むボタンを非表示）
 let companions = [];   // 複数人でのご来店（お連れ様）：{ id, name, menuIds: Set<string> } の配列
 let companionSeq = 0;  // お連れ様カードのDOM用ID採番（表示順の識別のみに使用、サーバーには送らない）
 let booking = { date: null, dateLabel: null, stylistId: null, stylistName: null, time: null };
@@ -66,8 +67,26 @@ function menuCardHtml(m, withCheckbox) {
 }
 
 function renderMenuList() {
-  document.getElementById("menu-list").innerHTML = MENUS.map(m => menuCardHtml(m, true)).join("");
+  document.getElementById("menu-list").innerHTML = MENUS.map(m => menuCardHtml(m, !menuViewOnly)).join("");
   document.getElementById("home-menu-list").innerHTML = MENUS.slice(0, 3).map(m => menuCardHtml(m, false)).join("");
+}
+
+// 「メニュー」タブ／「メニューを見る」：閲覧専用（チェックボックス・お連れ様追加・予約へ進むボタンなし）でメニュー画面を開く
+function openMenuView() {
+  menuViewOnly = true;
+  clearMenuError();
+  renderMenuList();
+  document.getElementById("menu-booking-extra").style.display = "none";
+  showCScreen("c-menu");
+}
+
+// 「予約する」／「予約」タブ：これまで通りチェックボックス付きの選択画面としてメニュー画面を開く
+function openMenuForBooking() {
+  menuViewOnly = false;
+  clearMenuError();
+  renderMenuList();
+  document.getElementById("menu-booking-extra").style.display = "";
+  showCScreen("c-menu");
 }
 // 薬剤の関係上、同時（同じ方）に施術できないメニューの組み合わせ。
 // ブリーチはパーマ・縮毛矯正と同時にはご予約いただけない。
@@ -226,7 +245,10 @@ function toggleCompanionMenu(id, menuId) {
 }
 
 function startBooking() {
-  if (selectedMenus.size === 0 && MENUS.length) selectedMenus.add(MENUS[0].id);
+  if (selectedMenus.size === 0) {
+    showMenuError("ご希望のメニューを1つ以上選択してください");
+    return;
+  }
   calMonthOffset = 0;
   renderCalendar();
   showCScreen("c-date");
