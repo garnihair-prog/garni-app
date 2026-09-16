@@ -1421,6 +1421,52 @@ class Handler(BaseHTTPRequestHandler):
                 "note": created["note"] or "",
             })
 
+        if path == "/api/staff/karte-notes":
+            # 施術直後に、声のアシスタント（セバス）などから来店履歴（カルテ）へ一言を書き残す。
+            # その日のカルテがあれば追記し、無ければその日の履歴として作る。
+            # 画面で書いた内容と食い違わないよう、追記のみで既存の記録は消さない。
+            if not self.require_staff():
+                return
+            customer_id = (body.get("customerId") or "").strip()
+            memo = (body.get("memo") or "").strip()
+            if not customer_id or not memo:
+                return self.send_json(400, {"error": "入力が不足しています"})
+            entry_date = (body.get("date") or "").strip() or jst_today().isoformat()
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", entry_date):
+                return self.send_json(400, {"error": "日付の形式が正しくありません"})
+
+            conn = db.get_conn()
+            customer = conn.execute("SELECT id FROM customers WHERE id=?", (customer_id,)).fetchone()
+            if not customer:
+                conn.close()
+                return self.send_json(404, {"error": "お客様が見つかりません"})
+            entry = conn.execute(
+                "SELECT * FROM karte_entries WHERE customer_id=? AND date=? ORDER BY rowid DESC LIMIT 1",
+                (customer_id, entry_date),
+            ).fetchone()
+            if entry:
+                memo_text = f"{entry['memo']}\n{memo}" if entry["memo"] else memo
+                conn.execute("UPDATE karte_entries SET memo=? WHERE id=?", (memo_text, entry["id"]))
+                kid = entry["id"]
+            else:
+                # その日のご予約があれば、メニュー名と予約をひも付ける（画面の表示に合わせるため）。
+                resv = conn.execute(
+                    "SELECT * FROM reservations WHERE customer_id=? AND date=? "
+                    "AND status NOT IN ('cancel', 'no_show') ORDER BY time LIMIT 1",
+                    (customer_id, entry_date),
+                ).fetchone()
+                kid = db.new_id()
+                conn.execute(
+                    "INSERT INTO karte_entries (id, customer_id, date, menu_names, memo, reservation_id) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (kid, customer_id, entry_date, resv["menu_names"] if resv else "記録のみ",
+                     memo, resv["id"] if resv else None),
+                )
+            conn.commit()
+            created = conn.execute("SELECT * FROM karte_entries WHERE id=?", (kid,)).fetchone()
+            conn.close()
+            return self.send_json(201, row_to_dict(created))
+
         if path == "/api/staff/settings":
             if not self.require_staff():
                 return
