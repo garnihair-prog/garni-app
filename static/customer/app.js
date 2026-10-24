@@ -138,6 +138,9 @@ function showMenuError(msg) {
   const errBox = document.getElementById("menu-error");
   errBox.textContent = msg;
   errBox.classList.add("show");
+  // エラー表示はメニュー一覧の上にあるため、画面下（お連れ様欄や「予約へ進む」ボタン付近）を
+  // 見ている状態だと気づけない。すでに見えている場合は動かさず、隠れている場合だけスクロールする。
+  errBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 function clearMenuError() {
@@ -247,6 +250,16 @@ function toggleCompanionMenu(id, menuId) {
 function startBooking() {
   if (selectedMenus.size === 0) {
     showMenuError("ご希望のメニューを1つ以上選択してください");
+    return;
+  }
+  // お連れ様は「お名前」と「メニュー」の両方がそろって初めて予約対象になる（validCompanions）。
+  // 片方だけ入力したまま進むと、警告もないまま予約から外れてしまうため、ここで知らせる。
+  // 両方とも空のカードは「追加したが使わなかった」とみなし、そのまま無視する。
+  const incomplete = companions.find(c => (c.name.trim() !== "") !== (c.menuIds.size > 0));
+  if (incomplete) {
+    showMenuError(incomplete.name.trim()
+      ? `お連れ様（${incomplete.name.trim()}様）のメニューを選択してください`
+      : "お連れ様のお名前を入力してください");
     return;
   }
   calMonthOffset = 0;
