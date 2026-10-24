@@ -548,6 +548,16 @@ async function submitNRReservation() {
     showNRMsg(primaryAgeMsg, true);
     return;
   }
+  // お連れ様は「お名前」と「メニュー」の両方がそろって初めて予約対象になる。片方だけ入力した
+  // まま登録すると、警告もないまま予約から外れてしまうため、ここで知らせる。
+  // 両方とも空のカードは「追加したが使わなかった」とみなし、そのまま無視する。
+  const incompleteCompanion = nrCompanions.find(c => (c.name.trim() !== "") !== (c.menuIds.size > 0));
+  if (incompleteCompanion) {
+    showNRMsg(incompleteCompanion.name.trim()
+      ? `お連れ様（${incompleteCompanion.name.trim()}様）のメニューを選択してください。`
+      : "お連れ様のお名前を入力してください。", true);
+    return;
+  }
   const validNRCompanions = nrCompanions.filter(c => c.name.trim() && c.menuIds.size > 0);
   for (const c of validNRCompanions) {
     const cAge = c.age === "" || c.age == null ? null : parseInt(c.age, 10);
