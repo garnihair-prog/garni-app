@@ -50,6 +50,8 @@ MAX_PHOTO_BYTES = 6 * 1024 * 1024  # 6MB（アップロード前にブラウザ�
 
 STAFF_PASSWORD = os.environ.get("GARNI_STAFF_PASSWORD", "garni2026")
 SESSIONS = {}  # token -> created_at (in-memory; MVP用。本番では永続セッションストアを推奨)
+# アクセスログで伏せるURLの値（鍵・パスワード・電話番号）
+SECRET_QUERY_RE = re.compile(r"([?&](?:token|key|password|pass|phone|tel)=)[^&\s\"]*", re.IGNORECASE)
 
 # My Schedule（別アプリ）から予約状況を読み取り専用で取り込むためのエクスポート用トークン。
 # 未設定の場合は /api/my-schedule 自体を無効化する（誤って予約データが公開されるのを防ぐ）。
@@ -494,7 +496,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+        # URLに含まれる鍵（予約エクスポートAPIの token など）や電話番号は、ログでは伏せる
+        line = SECRET_QUERY_RE.sub(r"\1***", fmt % args)
+        sys.stderr.write("%s - %s\n" % (self.address_string(), line))
 
     # ---------- low level send helpers ----------
     def send_json(self, status, obj, extra_headers=None):
@@ -2004,7 +2008,8 @@ def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     db.init_db()
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f"GARNI app running on http://0.0.0.0:{port}  (staff password: {STAFF_PASSWORD})")
+    # スタッフのパスワードはログに出さない（ログは NAS に残り、docker logs で読めるため）
+    print(f"GARNI app running on http://0.0.0.0:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
