@@ -414,6 +414,72 @@ def expire_stale_referral_rewards(conn, customer_id):
     )
 
 
+def merge_customers(conn, target, source, name, kana, phone):
+    """顧客カルテ source を target に統合する（同じお客様が別の電話番号で予約して、カルテが
+    2つに分かれてしまった場合に使う）。source に紐づく予約・来店履歴・同意書・紹介の記録を
+    すべて target に付け替えてから source を削除し、target のお名前・フリガナ・電話番号を
+    指定の内容にする。コミットは呼び出し側で行う（途中で失敗したらロールバックできるように）。
+    統合前の両方の顧客情報は customer_merges に記録として残す。移した件数の dict を返す。"""
+    tid, sid = target["id"], source["id"]
+    moved = {}
+    # 外部キー制約が有効なため、source を参照している行を先にすべて付け替える
+    for table, col in (
+        ("reservations", "customer_id"),
+        ("karte_entries", "customer_id"),
+        ("consent_agreements", "customer_id"),
+        ("referral_rewards", "referrer_customer_id"),
+        ("referral_rewards", "referred_customer_id"),
+        ("customers", "referred_by_customer_id"),
+    ):
+        cur = conn.execute(f"UPDATE {table} SET {col}=? WHERE {col}=?", (tid, sid))
+        moved[f"{table}.{col}"] = cur.rowcount
+    # 2つのカルテの間での「紹介」は、実際には同一人物なので紹介ではない。
+    # 未使用の紹介クーポンが自分宛てに残らないよう期限切れにする（使用済みの記録はそのまま残す）。
+    cur = conn.execute(
+        "UPDATE referral_rewards SET status='expired' "
+        "WHERE referrer_customer_id=? AND referred_customer_id=? AND status='active'",
+        (tid, tid),
+    )
+    moved["self_referral_rewards_expired"] = cur.rowcount
+
+    # 紹介者：target 側が未設定なら source 側を引き継ぐ。自分自身（＝統合相手）を指す場合は消す。
+    referred_by = target["referred_by_customer_id"]
+    if referred_by in (tid, sid):
+        referred_by = None
+    if referred_by is None and source["referred_by_customer_id"] not in (None, tid, sid):
+        referred_by = source["referred_by_customer_id"]
+    referral_code = target["referral_code"] or source["referral_code"]
+    customer_code = target["customer_code"] or source["customer_code"]
+    created_at = min(target["created_at"], source["created_at"])
+
+    conn.execute(
+        "INSERT INTO customer_merges (id, target_customer_id, source_customer_id, target_snapshot, "
+        "source_snapshot, moved_counts, merged_at) VALUES (?,?,?,?,?,?,?)",
+        (db.new_id(), tid, sid, json.dumps(dict(target), ensure_ascii=False),
+         json.dumps(dict(source), ensure_ascii=False), json.dumps(moved, ensure_ascii=False), db.now_iso()),
+    )
+    # 電話番号・紹介コードは一意制約があるため、source を消してから target に設定する
+    conn.execute("DELETE FROM customers WHERE id=?", (sid,))
+    conn.execute(
+        "UPDATE customers SET name=?, kana=?, phone=?, points=?, gender=?, age=?, referred_by_customer_id=?, "
+        "referral_code=?, customer_code=?, created_at=?, archived_at=NULL WHERE id=?",
+        (
+            name, kana, phone,
+            (target["points"] or 0) + (source["points"] or 0),
+            target["gender"] if target["gender"] is not None else source["gender"],
+            target["age"] if target["age"] is not None else source["age"],
+            referred_by, referral_code, customer_code, created_at, tid,
+        ),
+    )
+    # カルテの編集と同じく、予約記録の氏名・電話番号も新しい内容にそろえる
+    # （お客様がマイページで、残した電話番号から過去・今後の予約を確認できるように）
+    conn.execute(
+        "UPDATE reservations SET customer_name=?, customer_phone=? WHERE customer_id=?",
+        (name, phone, tid),
+    )
+    return moved
+
+
 def send_owner_notification_email(resv_dict, menu_names):
     """新しい予約が入ったことをオーナー様へメールで通知する。
     GARNI_SMTP_USER / GARNI_SMTP_PASSWORD が設定されていない場合は何もせずスキップする
@@ -1578,6 +1644,43 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
             return self.send_json(200, row_to_dict(updated))
 
+        m = re.match(r"^/api/staff/customers/([\w-]+)/merge$", path)
+        if m:
+            # 顧客カルテの統合：fromId のカルテを URL のカルテに統合する（fromId 側は消える）。
+            # 残すお名前・フリガナ・電話番号は画面で選んだものを受け取る。
+            if not self.require_staff():
+                return
+            tid = m.group(1)
+            sid = (body.get("fromId") or "").strip()
+            name = (body.get("name") or "").strip()
+            kana = (body.get("kana") or "").strip()
+            phone = re.sub(r"\D", "", (body.get("phone") or ""))
+            if not sid or sid == tid:
+                return self.send_json(400, {"error": "統合するカルテを選んでください"})
+            if not name or not phone:
+                return self.send_json(400, {"error": "お名前と電話番号を入力してください"})
+            conn = db.get_conn()
+            target = conn.execute("SELECT * FROM customers WHERE id=?", (tid,)).fetchone()
+            source = conn.execute("SELECT * FROM customers WHERE id=?", (sid,)).fetchone()
+            if not target or not source:
+                conn.close()
+                return self.send_json(404, {"error": "カルテが見つかりません"})
+            if phone not in (target["phone"], source["phone"]):
+                # 3人目のお客様の番号とぶつからないよう、どちらかのカルテの番号に限る
+                conn.close()
+                return self.send_json(400, {"error": "電話番号は、統合する2つのカルテのどちらかの番号を選んでください"})
+            try:
+                moved = merge_customers(conn, target, source, name, kana, phone)
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                conn.close()
+                print(f"[merge] failed {sid} -> {tid}: {e}", file=sys.stderr)
+                return self.send_json(500, {"error": "統合に失敗しました。カルテは変更されていません"})
+            updated = conn.execute("SELECT * FROM customers WHERE id=?", (tid,)).fetchone()
+            conn.close()
+            return self.send_json(200, {"customer": row_to_dict(updated), "moved": moved})
+
         return self.send_json(404, {"error": "not found"})
 
     def do_DELETE(self):
@@ -1736,10 +1839,24 @@ class Handler(BaseHTTPRequestHandler):
             if not name or not phone:
                 conn.close()
                 return self.send_json(400, {"error": "お名前と電話番号を入力してください"})
-            dup = conn.execute("SELECT id FROM customers WHERE phone=? AND id<>?", (phone, cid)).fetchone()
+            dup = conn.execute(
+                "SELECT id, name, customer_code, archived_at FROM customers WHERE phone=? AND id<>?", (phone, cid)
+            ).fetchone()
             if dup:
                 conn.close()
-                return self.send_json(400, {"error": "この電話番号は既に他のお客様に登録されています"})
+                # 同じお客様が新しい電話番号で予約して別のカルテができているケースが多いため、
+                # ぶつかった相手を返し、画面からそのまま「カルテの統合」を案内できるようにする。
+                # 削除済み（archived）のカルテも番号を持ったまま残っているため、その旨も返す。
+                who = f"{dup['name']}様" + ("（削除済みのカルテ）" if dup["archived_at"] else "")
+                return self.send_json(409, {
+                    "error": f"この電話番号は既に{who}に登録されています",
+                    "conflict": {
+                        "id": dup["id"],
+                        "name": dup["name"],
+                        "customerCode": dup["customer_code"],
+                        "archived": bool(dup["archived_at"]),
+                    },
+                })
             conn.execute("UPDATE customers SET name=?, phone=?, kana=? WHERE id=?", (name, phone, kana, cid))
             # 過去の予約記録（カルテの来店履歴・マイページ等に表示される氏名・電話番号）も新しい内容に合わせて更新する。
             # これにより、電話番号を変更した後もお客様が新しい電話番号でマイページから過去・今後の予約を

@@ -153,6 +153,17 @@ CREATE TABLE IF NOT EXISTS consent_agreements (
     FOREIGN KEY (reservation_id) REFERENCES reservations(id),
     FOREIGN KEY (consent_form_id) REFERENCES consent_forms(id)
 );
+-- 顧客カルテの統合（同じお客様が別の電話番号で予約して2つできたカルテを1つにまとめる）の記録。
+-- 統合されて消えた側のカルテ情報を残しておき、後から経緯を確認できるようにする。
+CREATE TABLE IF NOT EXISTS customer_merges (
+    id TEXT PRIMARY KEY,
+    target_customer_id TEXT NOT NULL,  -- 残したカルテ
+    source_customer_id TEXT NOT NULL,  -- 統合されて消えたカルテ
+    target_snapshot TEXT NOT NULL,     -- 統合前の残した側の顧客情報（JSON）
+    source_snapshot TEXT NOT NULL,     -- 統合前の消えた側の顧客情報（JSON）
+    moved_counts TEXT NOT NULL,        -- 移した件数（予約・来店履歴など。JSON）
+    merged_at TEXT NOT NULL
+);
 """
 
 
