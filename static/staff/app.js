@@ -31,6 +31,7 @@ async function api(path, options) {
   if (!res.ok) {
     const err = new Error((data && data.error) || "エラーが発生しました");
     err.status = res.status;
+    err.data = data; // エラー時にサーバーが返す追加情報（例：電話番号がぶつかったカルテの情報）
     throw err;
   }
   return data;
@@ -607,6 +608,9 @@ async function submitNRReservation() {
 let selectedCustomerId = null;
 let editingCustomerId = null;
 let currentKarteData = null;
+// カルテの統合の画面状態。null（非表示）／{ stage: "pick", query, rows }（統合する相手を探す）／
+// { stage: "confirm", other, typed }（残すお名前・電話番号を選んで統合する）
+let mergeState = null;
 async function loadCustomers() {
   const rows = await api("/api/staff/customers");
   document.getElementById("cust-list").innerHTML = rows.map(c => `
@@ -624,6 +628,7 @@ async function loadCustomers() {
 async function selectCustomer(id) {
   selectedCustomerId = id;
   editingCustomerId = null;
+  mergeState = null;
   selectedKarteEntryId = null;
   document.querySelectorAll(".cust-row").forEach(r => r.classList.remove("sel"));
   currentKarteData = await api(`/api/staff/customers/${id}`);
@@ -632,6 +637,7 @@ async function selectCustomer(id) {
 }
 function startEditCustomer(id) {
   editingCustomerId = id;
+  mergeState = null;
   renderKarteDetail();
 }
 function cancelCustomerEdit() {
@@ -652,11 +658,184 @@ async function saveCustomerEdit(id) {
     editingCustomerId = null;
     await selectCustomer(id);
   } catch (e) {
-    if (msgBox) {
+    if (!msgBox) return;
+    const conflict = e.status === 409 && e.data && e.data.conflict;
+    if (conflict) {
+      // 同じお客様の別カルテ（新しい番号で予約して増えたもの・削除済みのものを含む）と番号がぶつかった。
+      // 編集では解決できないので、そのカルテを統合する道を案内する。入力中の内容は統合画面に引き継ぐ。
+      pendingEditTyped = { name, kana, phone };
+      msgBox.innerHTML = `${escapeHtml(e.message)}。同じお客様のカルテであれば、統合すると1つにまとめられます。
+        <div style="margin-top:8px;"><button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--brand);border-radius:8px;color:var(--brand);font-size:11.5px;background:#fff;" onclick="openMergeConfirm('${conflict.id}', true)">${escapeHtml(conflict.name)}様のカルテをこのカルテに統合する</button></div>`;
+    } else {
       msgBox.textContent = e.message || "保存に失敗しました";
-      msgBox.classList.add("show");
     }
+    msgBox.classList.add("show");
   }
+}
+
+/* ---------------- カルテの統合 ----------------
+   同じお客様が新しい電話番号（や新しい苗字）でネット予約すると、電話番号でお客様を見分けているため
+   別のカルテができてしまう。2つのカルテを1つにまとめ、来店履歴・予約・同意書・紹介の記録を
+   表示中のカルテに移す（統合した相手のカルテは消える）。 */
+let pendingEditTyped = null; // 編集で番号がぶつかったときに入力していた内容（統合画面の選択肢に使う）
+
+async function openMergePicker() {
+  editingCustomerId = null;
+  mergeState = { stage: "pick", query: "", rows: null };
+  renderKarteDetail();
+  try {
+    const rows = await api("/api/staff/customers");
+    if (mergeState && mergeState.stage === "pick") {
+      mergeState.rows = rows.filter(c => c.id !== selectedCustomerId);
+      renderMergePickList();
+    }
+  } catch (e) {
+    showKarteMsg(e.message || "お客様一覧を読み込めませんでした", true);
+  }
+}
+function updateMergeQuery(value) {
+  if (!mergeState || mergeState.stage !== "pick") return;
+  mergeState.query = value;
+  renderMergePickList();
+}
+// 一覧部分だけを描き直す（検索欄を描き直すと入力中の文字のカーソルが外れるため）
+function renderMergePickList() {
+  const box = document.getElementById("merge-pick-list");
+  if (!box || !mergeState || mergeState.stage !== "pick") return;
+  if (!mergeState.rows) { box.innerHTML = `<div style="font-size:12px;color:var(--text-muted);">読み込み中…</div>`; return; }
+  const q = mergeState.query.trim().replace(/[\s　-]/g, "").toLowerCase();
+  const hits = mergeState.rows.filter(c => {
+    if (!q) return true;
+    const hay = [c.name, c.kana, c.phone, c.customer_code].map(v => String(v || "").replace(/[\s　-]/g, "").toLowerCase()).join(" ");
+    return hay.includes(q);
+  }).slice(0, 30);
+  box.innerHTML = hits.length ? hits.map(c => `
+    <div class="cust-row" style="cursor:pointer;" onclick="openMergeConfirm('${c.id}', false)">
+      <div class="nm">${escapeHtml(c.name)}${c.kana ? `<span style="font-size:11px;color:var(--text-muted);margin-left:6px;">${escapeHtml(c.kana)}</span>` : ""}</div>
+      <div class="lv">電話 ${escapeHtml(c.phone)} ／ 顧客コード ${escapeHtml(c.customer_code || "―")} ／ 最終来店 ${escapeHtml(c.last_visit || "―")}</div>
+    </div>`).join("") : `<div style="font-size:12px;color:var(--text-muted);">該当するお客様がいません</div>`;
+}
+async function openMergeConfirm(otherId, fromEdit) {
+  try {
+    const other = await api(`/api/staff/customers/${otherId}`);
+    editingCustomerId = null;
+    mergeState = { stage: "confirm", other, typed: fromEdit ? pendingEditTyped : null };
+    pendingEditTyped = null;
+    renderKarteDetail();
+  } catch (e) {
+    showKarteMsg(e.message || "統合するカルテを読み込めませんでした", true);
+  }
+}
+function cancelMerge() {
+  mergeState = null;
+  renderKarteDetail();
+}
+// 残す値の選択肢：このカルテの値・統合するカルテの値（＋編集で入力していた値が別にあればそれも）。
+// 同じ値は1つにまとめる。初期選択は「編集で入力していた値」→ 無ければ「このカルテの値」。
+function mergeFieldOptions(field, label, mine, theirs, typed, allowTyped) {
+  const opts = [];
+  const add = (value, caption) => {
+    const v = value || "";
+    const existing = opts.find(o => o.value === v);
+    if (existing) existing.caption += "・" + caption;
+    else opts.push({ value: v, caption });
+  };
+  add(mine, "このカルテ");
+  add(theirs, "統合するカルテ");
+  if (allowTyped && typed != null && typed !== "") add(typed, "編集で入力した内容");
+  const initial = (typed != null && opts.some(o => o.value === typed)) ? typed : (mine || "");
+  return `
+    <div style="margin-bottom:10px;">
+      <div style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:4px;">${label}</div>
+      ${opts.map((o, i) => `
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0;cursor:pointer;">
+          <input type="radio" name="merge-${field}" value="${escapeHtml(o.value)}" ${o.value === initial ? "checked" : ""}>
+          <span>${o.value ? escapeHtml(o.value) : '<span style="color:var(--text-muted);">（空欄）</span>'}</span>
+          <span style="font-size:11px;color:var(--text-muted);">${escapeHtml(o.caption)}</span>
+        </label>`).join("")}
+    </div>`;
+}
+function mergeCardHtml(title, c, visitCount, tone) {
+  return `
+    <div style="flex:1;min-width:200px;border:1px solid ${tone};border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.7;">
+      <div style="font-size:11px;font-weight:700;color:${tone};margin-bottom:2px;">${title}</div>
+      <div style="font-weight:700;font-size:14px;">${escapeHtml(c.name)}</div>
+      ${c.kana ? `<div style="color:var(--text-muted);font-size:11px;">${escapeHtml(c.kana)}</div>` : ""}
+      <div>電話：${escapeHtml(c.phone)}</div>
+      <div>顧客コード：${escapeHtml(c.customer_code || "―")}${c.archived_at ? '　<span style="color:var(--critical);">削除済み</span>' : ""}</div>
+      <div>来店履歴：${visitCount}件 ／ ${c.points || 0}pt</div>
+    </div>`;
+}
+function mergePanelHtml() {
+  if (!mergeState) return "";
+  const box = (inner) => `<div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin:10px 0 14px;background:var(--page-plane);">${inner}</div>`;
+  if (mergeState.stage === "pick") {
+    return box(`
+      <div style="font-weight:700;font-size:13px;margin-bottom:4px;">別のお客様のカルテをこのカルテに統合</div>
+      <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:8px;">同じお客様のカルテが2つある場合に使います。お名前・フリガナ・電話番号・顧客コードで探せます。</div>
+      <input id="merge-query" type="text" placeholder="例：佐藤、09012345678" value="${escapeHtml(mergeState.query)}" oninput="updateMergeQuery(this.value)" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;box-sizing:border-box;font-size:13px;">
+      <div id="merge-pick-list" style="max-height:280px;overflow-y:auto;"></div>
+      <button class="btn-ghost" style="width:auto;margin-top:8px;padding:4px 10px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;" onclick="cancelMerge()">やめる</button>`);
+  }
+  const mine = currentKarteData.customer;
+  const other = mergeState.other.customer;
+  const typed = mergeState.typed || {};
+  return box(`
+    <div style="font-weight:700;font-size:13px;margin-bottom:8px;">カルテの統合</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+      ${mergeCardHtml("このカルテ（残ります）", mine, (currentKarteData.history || []).length, "var(--good)")}
+      ${mergeCardHtml("統合するカルテ（なくなります）", other, (mergeState.other.history || []).length, "var(--critical)")}
+    </div>
+    <div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">統合後に使うお名前・フリガナ・電話番号を選んでください。</div>
+    ${mergeFieldOptions("name", "お名前", mine.name, other.name, typed.name, true)}
+    ${mergeFieldOptions("kana", "フリガナ", mine.kana, other.kana, typed.kana, true)}
+    ${mergeFieldOptions("phone", "電話番号", mine.phone, other.phone, typed.phone, false)}
+    <div style="font-size:11.5px;color:var(--text-secondary);background:#fff;border-radius:8px;padding:8px 10px;margin-bottom:10px;line-height:1.6;">
+      統合すると、${escapeHtml(other.name)}様のカルテの来店履歴・予約・同意書・紹介の記録・ポイントは、すべてこのカルテに移ります。
+      ${escapeHtml(other.name)}様のカルテはなくなり、<b>元には戻せません</b>。
+    </div>
+    <div class="error-banner" id="merge-error"></div>
+    <div style="display:flex;gap:8px;">
+      <button class="btn-ghost" style="width:auto;padding:6px 14px;border:1px solid var(--critical);border-radius:8px;color:#fff;background:var(--critical);font-size:12px;font-weight:700;" onclick="submitMerge()">統合する</button>
+      <button class="btn-ghost" style="width:auto;padding:6px 14px;border:1px solid var(--border);border-radius:8px;font-size:12px;" onclick="cancelMerge()">やめる</button>
+    </div>`);
+}
+async function submitMerge() {
+  if (!mergeState || mergeState.stage !== "confirm") return;
+  const pick = (field) => {
+    const el = document.querySelector(`input[name="merge-${field}"]:checked`);
+    return el ? el.value : "";
+  };
+  const name = pick("name").trim();
+  const kana = pick("kana").trim();
+  const phone = pick("phone").trim();
+  const errBox = document.getElementById("merge-error");
+  const showErr = (msg) => { if (errBox) { errBox.textContent = msg; errBox.classList.add("show"); } };
+  if (!name || !phone) { showErr("お名前と電話番号を選んでください"); return; }
+  const other = mergeState.other.customer;
+  const targetId = currentKarteData.customer.id;
+  if (!confirm(`${other.name}様のカルテを、このカルテに統合します。\n統合後：${name}${kana ? "（" + kana + "）" : ""}　電話 ${phone}\n\n元には戻せません。よろしいですか？`)) return;
+  try {
+    const res = await api(`/api/staff/customers/${targetId}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ fromId: other.id, name, kana, phone }),
+    });
+    await selectCustomer(targetId);
+    const moved = res.moved || {};
+    showKarteMsg(`統合しました（予約${moved["reservations.customer_id"] || 0}件・来店履歴${moved["karte_entries.customer_id"] || 0}件を移しました）`, false);
+  } catch (e) {
+    showErr(e.message || "統合に失敗しました");
+  }
+}
+// カルテ上部のお知らせ欄（成功は緑、失敗は赤）
+function showKarteMsg(text, isError) {
+  const box = document.getElementById("karte-msg");
+  if (!box) return;
+  box.textContent = text;
+  box.style.background = isError ? "" : "#e7f6e7";
+  box.style.borderColor = isError ? "" : "var(--good)";
+  box.style.color = isError ? "" : "#0a6b0a";
+  box.classList.add("show");
 }
 // 顧客カルテの一番上に表示する「来店サマリー」（来店回数・累計利用金額・来店頻度・よく使うメニュー）。
 // 来店履歴（karte_entries、施術が完了した予約のみ）から集計する。
@@ -820,8 +999,9 @@ function renderKarteDetail() {
         ${c.kana ? `<div style="font-size:11px;color:var(--text-muted);">${escapeHtml(c.kana)}</div>` : ""}
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">電話：${escapeHtml(c.phone)} ／ ${c.points}pt</div>
       </div>
-      <div style="display:flex;gap:6px;flex:0 0 auto;">
+      <div style="display:flex;gap:6px;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end;">
         <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;" onclick="startEditCustomer('${c.id}')">編集</button>
+        <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--border);border-radius:8px;font-size:11.5px;" onclick="openMergePicker()">統合</button>
         <button class="btn-ghost" style="width:auto;padding:4px 10px;border:1px solid var(--critical);border-radius:8px;color:var(--critical);font-size:11.5px;" onclick="deleteCustomer('${c.id}', '${c.name.replace(/'/g, "\\'")}')">お客様を削除</button>
       </div>`;
 
@@ -842,10 +1022,16 @@ function renderKarteDetail() {
     </div>
     <div class="error-banner" id="karte-msg"></div>
     <div class="error-banner" id="karte-edit-msg"></div>
+    ${mergePanelHtml()}
     ${karteSummaryHtml(data)}
     ${referralInfoHtml(data)}
     ${consentInfoHtml(data)}
     ${historySectionHtml}`;
+  if (mergeState && mergeState.stage === "pick") {
+    renderMergePickList();
+    const q = document.getElementById("merge-query");
+    if (q) q.focus();
+  }
 }
 
 async function deleteCustomer(id, name) {
