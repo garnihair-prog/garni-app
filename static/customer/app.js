@@ -659,18 +659,24 @@ function downloadBookingICS() {
   downloadICS(booking.date, booking.time, totalDurationMin(), menuNames);
 }
 
+// マイページで照会に使った電話番号とお名前。予約の変更・キャンセルのときにも同じものを送る
+// （サーバー側で毎回、本人の予約かを確かめるため）。
+let mpAuth = null;
+
 async function lookupMyPage() {
   const phone = document.getElementById("mp-phone").value.trim();
+  const name = document.getElementById("mp-name").value.trim();
   const errBox = document.getElementById("mypage-error");
   errBox.classList.remove("show");
-  if (!phone) { errBox.textContent = "電話番号を入力してください。"; errBox.classList.add("show"); return; }
+  if (!phone || !name) { errBox.textContent = "電話番号とお名前を入力してください。"; errBox.classList.add("show"); return; }
   try {
-    const data = await api(`/api/mypage?phone=${encodeURIComponent(phone)}`);
+    const data = await api("/api/mypage", { method: "POST", body: JSON.stringify({ phone, name }) });
     if (!data.found) {
-      errBox.textContent = "ご予約情報が見つかりませんでした。予約時と同じ電話番号でお試しください。";
+      errBox.textContent = "ご予約情報が見つかりませんでした。ご予約時と同じ電話番号とお名前でお試しください。";
       errBox.classList.add("show");
       return;
     }
+    mpAuth = { phone, name };
     document.getElementById("mypage-lookup").style.display = "none";
     document.getElementById("mypage-result").style.display = "block";
     document.getElementById("mp-pts").textContent = data.customer.points.toLocaleString() + " pt";
@@ -685,9 +691,16 @@ async function lookupMyPage() {
     renderMpRewards();
     renderMpHistory();
   } catch (e) {
-    errBox.textContent = "取得に失敗しました。もう一度お試しください。";
+    errBox.textContent = lookupErrorMessage(e);
     errBox.classList.add("show");
   }
+}
+
+// 照会に失敗したときの表示。失敗が続いて一時的に止められている場合（429）などは、
+// サーバーからの説明をそのまま見せる。
+function lookupErrorMessage(e) {
+  if (e && [400, 410, 429].includes(e.status) && e.message) return e.message;
+  return "取得に失敗しました。もう一度お試しください。";
 }
 
 function mpPhotoHtml(path, label, placeholder) {
@@ -781,10 +794,9 @@ async function saveMyPageEdit(id) {
   const msgBox = document.getElementById(`mp-msg-${id}`);
   if (msgBox) msgBox.classList.remove("show");
   try {
-    const phone = document.getElementById("mp-phone").value.trim();
     const noteEl = document.getElementById(`mp-note-${id}`);
     const note = noteEl ? noteEl.value.trim() : "";
-    const body = { phone, note };
+    const body = { phone: mpAuth && mpAuth.phone, name: mpAuth && mpAuth.name, note };
     if (mpEditPhotos[id]) body.stylePhoto = mpEditPhotos[id];
     const updated = await api(`/api/mypage/reservations/${id}`, { method: "PATCH", body: JSON.stringify(body) });
     delete mpEditPhotos[id];
@@ -820,10 +832,9 @@ function abortCancelReservation(id) {
 async function confirmCancelReservation(id) {
   const msgBox = document.getElementById(`mp-msg-${id}`);
   try {
-    const phone = document.getElementById("mp-phone").value.trim();
     const updated = await api(`/api/mypage/reservations/${id}`, {
       method: "PATCH",
-      body: JSON.stringify({ phone, action: "cancel" }),
+      body: JSON.stringify({ phone: mpAuth && mpAuth.phone, name: mpAuth && mpAuth.name, action: "cancel" }),
     });
     mpCancelConfirmId = null;
     const idx = mpReservations.findIndex(r => r.id === id);
@@ -859,6 +870,8 @@ function resetMyPage() {
   document.getElementById("mypage-lookup").style.display = "block";
   document.getElementById("mypage-result").style.display = "none";
   document.getElementById("mp-phone").value = "";
+  document.getElementById("mp-name").value = "";
+  mpAuth = null;
   mpReservations = [];
   mpEditPhotos = {};
   mpCancelConfirmId = null;
@@ -891,13 +904,14 @@ function renderRfRewards() {
 
 async function lookupReferral() {
   const phone = document.getElementById("rf-phone").value.trim();
+  const name = document.getElementById("rf-name").value.trim();
   const errBox = document.getElementById("referral-error");
   errBox.classList.remove("show");
-  if (!phone) { errBox.textContent = "電話番号を入力してください。"; errBox.classList.add("show"); return; }
+  if (!phone || !name) { errBox.textContent = "電話番号とお名前を入力してください。"; errBox.classList.add("show"); return; }
   try {
-    const data = await api(`/api/referral?phone=${encodeURIComponent(phone)}`);
+    const data = await api("/api/referral", { method: "POST", body: JSON.stringify({ phone, name }) });
     if (!data.found) {
-      errBox.textContent = "ご予約情報が見つかりませんでした。予約時と同じ電話番号でお試しください。";
+      errBox.textContent = "ご予約情報が見つかりませんでした。ご予約時と同じ電話番号とお名前でお試しください。";
       errBox.classList.add("show");
       return;
     }
@@ -909,7 +923,7 @@ async function lookupReferral() {
     const url = `${location.origin}/?ref=${encodeURIComponent(data.referralCode)}`;
     QRCode.renderToCanvas(document.getElementById("rf-qr"), url, { scale: 5, border: 3 });
   } catch (e) {
-    errBox.textContent = "取得に失敗しました。もう一度お試しください。";
+    errBox.textContent = lookupErrorMessage(e);
     errBox.classList.add("show");
   }
 }
@@ -930,6 +944,7 @@ function resetReferral() {
   document.getElementById("referral-lookup").style.display = "block";
   document.getElementById("referral-result").style.display = "none";
   document.getElementById("rf-phone").value = "";
+  document.getElementById("rf-name").value = "";
   rfRewards = [];
 }
 

@@ -183,7 +183,9 @@
         <div class="cscreen" id="c-mypage">
           <div class="section-title">マイページ</div>
           <div id="mypage-lookup">
-            <div class="field"><label>電話番号でご予約状況を確認</label><input type="tel" id="mp-phone" placeholder="ご登録の電話番号"></div>
+            <div class="banner">お客様の情報を守るため、ご予約時の電話番号とお名前（苗字だけでも可）の両方を入力してください。</div>
+            <div class="field"><label>電話番号</label><input type="tel" id="mp-phone" placeholder="ご予約時の電話番号" autocomplete="tel"></div>
+            <div class="field"><label>お名前</label><input type="text" id="mp-name" placeholder="例：熊本（苗字だけでも可）" autocomplete="family-name"></div>
             <button class="btn-primary" onclick="lookupMyPage()">照会する</button>
             <div class="error-banner" id="mypage-error"></div>
           </div>
@@ -204,7 +206,8 @@
           <div class="section-title">お友達をご紹介</div>
           <div class="banner">お友達がこの紹介コード・QRコードからご予約いただき、ご来店が完了すると、あなたに500円割引クーポンをプレゼントします（クーポンの有効期限は発行から6ヶ月間）。</div>
           <div id="referral-lookup">
-            <div class="field"><label>電話番号で紹介コードを表示</label><input type="tel" id="rf-phone" placeholder="ご登録の電話番号"></div>
+            <div class="field"><label>電話番号</label><input type="tel" id="rf-phone" placeholder="ご予約時の電話番号" autocomplete="tel"></div>
+            <div class="field"><label>お名前</label><input type="text" id="rf-name" placeholder="例：熊本（苗字だけでも可）" autocomplete="family-name"></div>
             <button class="btn-primary" onclick="lookupReferral()">紹介コードを表示する</button>
             <div class="error-banner" id="referral-error"></div>
           </div>
@@ -247,6 +250,6 @@
 
 <script src="/static/shared/photo.js?v=20261024"></script>
 <script src="/static/shared/qrcode.js?v=20261024"></script>
-<script src="/static/customer/app.js?v=20261024"></script>
+<script src="/static/customer/app.js?v=20261101"></script>
 </body>
 </html>
