@@ -136,7 +136,7 @@ async function loadDashboard() {
     <div class="stat-tile"><div class="label">本日の予約数（対応待ち）</div><div class="value">${data.todayReservations.filter(r => r.status === "wait").length}件</div></div>
   `;
   document.getElementById("dash-reserve-body").innerHTML = data.todayReservations.map(r => `
-    <tr><td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}${companionSummaryHtml(r)}</td><td>${r.menu_names}</td><td>${r.stylist_name}</td><td>${statusPillHtml(r.status)}</td></tr>
+    <tr><td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${escapeHtml(r.customer_name)}${companionSummaryHtml(r)}</td><td>${escapeHtml(r.menu_names)}</td><td>${escapeHtml(r.stylist_name)}</td><td>${statusPillHtml(r.status)}</td></tr>
   `).join("") || `<tr><td colspan="5" style="color:var(--text-muted);">本日の予約はまだありません</td></tr>`;
   drawSalesChart(data.weeklySales);
   loadCustomerStats();
@@ -146,7 +146,7 @@ function barListHtml(items, unit) {
   if (!items.length) return `<div class="bl-empty">データがまだありません</div>`;
   return items.map(it => `
     <div class="bl-row">
-      <div class="bl-top"><span class="bl-name">${it.name || it.label}</span><span class="bl-val">${it.count}${unit || "人"}（${it.percentage}%）</span></div>
+      <div class="bl-top"><span class="bl-name">${escapeHtml(it.name || it.label)}</span><span class="bl-val">${it.count}${unit || "人"}（${it.percentage}%）</span></div>
       <div class="bl-track"><div class="bl-fill" style="width:${Math.min(it.percentage, 100)}%;"></div></div>
     </div>`).join("");
 }
@@ -282,8 +282,8 @@ async function loadReserveDate() {
 
   document.getElementById("reserve-body").innerHTML = visibleRows.map(r => `
     <tr class="clickable-row" onclick="openEditReservation('${r.id}')">
-      <td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${r.customer_name}${companionSummaryHtml(r)}</td><td>${r.customer_phone}</td><td>${r.menu_names}</td>
-      <td>${r.stylist_name}</td><td class="amt">¥${r.total_price.toLocaleString()}</td>
+      <td>${timeRangeLabel(r.time, r.duration_min)}</td><td>${escapeHtml(r.customer_name)}${companionSummaryHtml(r)}</td><td>${escapeHtml(r.customer_phone)}</td><td>${escapeHtml(r.menu_names)}</td>
+      <td>${escapeHtml(r.stylist_name)}</td><td class="amt">¥${r.total_price.toLocaleString()}</td>
       <td onclick="event.stopPropagation()">${photoThumbHtml(r.style_photo_path, "希望スタイル")}</td>
       <td onclick="event.stopPropagation()">
         ${statusSelectHtml(r)}
@@ -380,7 +380,7 @@ async function initNRForm() {
   const [menus, stylists] = await Promise.all([api("/api/menus"), api("/api/stylists")]);
   NR_MENUS = menus;
   NR_STYLISTS = stylists;
-  document.getElementById("nr-stylist").innerHTML = stylists.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
+  document.getElementById("nr-stylist").innerHTML = stylists.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("");
   document.getElementById("nr-date").value = todayISO();
   renderNRMenuList();
   renderNRCompanions();
@@ -393,7 +393,7 @@ function nrMenuRowHtml(m) {
     <div class="menu-card">
       <div class="menu-row">
         <input type="checkbox" ${checked} onchange="toggleNRMenu('${m.id}')">
-        <div><div class="mname">${m.name}</div>${m.meta ? `<div class="mmeta">${m.meta}</div>` : ""}</div>
+        <div><div class="mname">${escapeHtml(m.name)}</div>${m.meta ? `<div class="mmeta">${escapeHtml(m.meta)}</div>` : ""}</div>
       </div>
       <div class="price-col">
         <div class="mprice">¥${m.price.toLocaleString()}${m.price_is_from ? "〜" : ""}</div>
@@ -615,7 +615,7 @@ async function loadCustomers() {
   const rows = await api("/api/staff/customers");
   document.getElementById("cust-list").innerHTML = rows.map(c => `
     <div class="cust-row ${c.id === selectedCustomerId ? "sel" : ""}" onclick="selectCustomer('${c.id}')">
-      <div class="nm">${c.name}</div>
+      <div class="nm">${escapeHtml(c.name)}</div>
       <div class="lv">最終来店 ${c.last_visit || "―"}</div>
     </div>`).join("");
   if (!rows.length) {
@@ -1059,7 +1059,7 @@ function referralRewardStatusLabel(status) {
 function referralInfoHtml(data) {
   const c = data.customer;
   const referredLine = data.referredByName
-    ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">${data.referredByName}様のご紹介でご来店</div>`
+    ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">${escapeHtml(data.referredByName)}様のご紹介でご来店</div>`
     : "";
   const rewards = data.referralRewards || [];
   const rewardRows = rewards.map(r => {
@@ -1067,7 +1067,7 @@ function referralInfoHtml(data) {
     return `
       <div class="rf-reward-row" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--gridline);font-size:12px;">
         <div>
-          <div>${r.referred_customer_name || "―"}様のご紹介 ／ ¥${r.amount.toLocaleString()}引き</div>
+          <div>${escapeHtml(r.referred_customer_name || "―")}様のご紹介 ／ ¥${r.amount.toLocaleString()}引き</div>
           <div style="color:var(--text-muted);font-size:11px;">発行 ${r.issued_at} ／ 期限 ${r.expires_at}${r.used_at ? ` ／ 使用日 ${r.used_at.slice(0,10)}` : ""}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -1105,7 +1105,7 @@ function consentInfoHtml(data) {
   if (agreements.length === 0) return "";
   const rows = agreements.map(a => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--gridline);font-size:12px;">
-      <div>${a.form_title}${a.reservation_date ? `（${a.reservation_date}のご予約）` : ""}</div>
+      <div>${escapeHtml(a.form_title)}${a.reservation_date ? `（${a.reservation_date}のご予約）` : ""}</div>
       <div style="color:var(--text-muted);font-size:11px;">同意日時 ${a.agreed_at ? a.agreed_at.replace("T", " ") : "―"}</div>
     </div>`).join("");
   return `
@@ -1123,7 +1123,7 @@ async function uploadKartePhoto(karteId, input) {
     await api(`/api/staff/karte/${karteId}/photo`, { method: "POST", body: JSON.stringify({ photo }) });
     if (selectedCustomerId) selectCustomer(selectedCustomerId);
   } catch (e) {
-    if (label) label.insertAdjacentHTML("afterend", `<div style="font-size:11px;color:var(--warning);margin-top:4px;">写真のアップロードに失敗しました：${e.message}</div>`);
+    if (label) label.insertAdjacentHTML("afterend", `<div style="font-size:11px;color:var(--warning);margin-top:4px;">写真のアップロードに失敗しました：${escapeHtml(e.message)}</div>`);
   }
 }
 
@@ -1143,7 +1143,7 @@ async function loadShift() {
   const stylistSel = document.getElementById("sb-stylist");
   if (stylistSel) {
     const prevStylist = stylistSel.value;
-    stylistSel.innerHTML = data.stylists.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
+    stylistSel.innerHTML = data.stylists.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("");
     if (data.stylists.some(s => s.id === prevStylist)) stylistSel.value = prevStylist;
   }
   renderShiftBreaks(data.breaks || []);
@@ -1158,7 +1158,7 @@ function renderShiftBreaks(breaks) {
   }
   const dow = ["日", "月", "火", "水", "木", "金", "土"];
   box.innerHTML = breaks.map(b => {
-    const label = `${b.date.slice(5).replace("-", "/")}（${dow[new Date(b.date + "T00:00:00").getDay()]}） ${b.stylistName}：${b.start}〜${b.end}${b.note ? "　" + escapeHtml(b.note) : ""}`;
+    const label = `${b.date.slice(5).replace("-", "/")}（${dow[new Date(b.date + "T00:00:00").getDay()]}） ${escapeHtml(b.stylistName)}：${b.start}〜${b.end}${b.note ? "　" + escapeHtml(b.note) : ""}`;
     return `
     <div style="display:flex;align-items:center;justify-content:space-between;background:var(--brand-tint);border-radius:10px;padding:8px 12px;font-size:13px;">
       <span>${label}</span>
@@ -1205,7 +1205,7 @@ function shiftWeek(days) {
 /* ---------------- MENU MANAGEMENT ---------------- */
 function consentFormOptionsHtml(selectedId) {
   const noneOpt = `<option value="" ${!selectedId ? "selected" : ""}>なし</option>`;
-  const opts = CONSENT_FORMS.map(f => `<option value="${f.id}" ${f.id === selectedId ? "selected" : ""}>${f.title}</option>`).join("");
+  const opts = CONSENT_FORMS.map(f => `<option value="${f.id}" ${f.id === selectedId ? "selected" : ""}>${escapeHtml(f.title)}</option>`).join("");
   return noneOpt + opts;
 }
 async function loadMenus() {
@@ -1215,7 +1215,7 @@ async function loadMenus() {
   document.getElementById("menu-new-consent").innerHTML = consentFormOptionsHtml(null);
   document.getElementById("menu-body").innerHTML = rows.map(m => `
     <tr data-id="${m.id}">
-      <td><input class="cell-input" id="m-name-${m.id}" value="${m.name}"></td>
+      <td><input class="cell-input" id="m-name-${m.id}" value="${escapeHtml(m.name)}"></td>
       <td><input class="cell-input" id="m-meta-${m.id}" value="${m.meta || ""}"></td>
       <td><input class="cell-input" id="m-price-${m.id}" type="number" style="width:90px;" value="${m.price}"></td>
       <td style="text-align:center;"><input type="checkbox" id="m-from-${m.id}" ${m.price_is_from ? "checked" : ""} style="accent-color:var(--brand);" title="目安価格（〜表示）"></td>
@@ -1324,7 +1324,7 @@ async function loadSettings() {
   const menus = await api("/api/menus");
   document.getElementById("last-order-list").innerHTML = menus.map(m => `
     <div style="display:flex;align-items:center;gap:12px;">
-      <span style="min-width:110px;font-size:13px;font-weight:600;">${m.name}</span>
+      <span style="min-width:110px;font-size:13px;font-weight:600;">${escapeHtml(m.name)}</span>
       <input type="time" id="lo-${m.id}" value="${m.last_order_time || ""}" style="max-width:150px;border-radius:10px;border:1px solid var(--border);padding:8px 10px;font-size:13px;">
     </div>`).join("") || `<div style="font-size:12px;color:var(--text-muted);">メニューがまだありません</div>`;
 }
@@ -1505,7 +1505,7 @@ function erMenuRowHtml(m) {
     <div class="menu-card">
       <div class="menu-row">
         <input type="checkbox" ${checked} onchange="toggleERMenu('${m.id}')">
-        <div><div class="mname">${m.name}</div>${m.meta ? `<div class="mmeta">${m.meta}</div>` : ""}</div>
+        <div><div class="mname">${escapeHtml(m.name)}</div>${m.meta ? `<div class="mmeta">${escapeHtml(m.meta)}</div>` : ""}</div>
       </div>
       <div class="price-col">
         <div class="mprice">¥${m.price.toLocaleString()}${m.price_is_from ? "〜" : ""}</div>
@@ -1589,7 +1589,7 @@ async function openEditReservation(id) {
   document.getElementById("er-gender").value = "";
   document.getElementById("er-age").value = "";
   document.getElementById("er-date").value = r.date;
-  document.getElementById("er-stylist").innerHTML = NR_STYLISTS.map(s => `<option value="${s.id}">${s.name}</option>`).join("");
+  document.getElementById("er-stylist").innerHTML = NR_STYLISTS.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("");
   document.getElementById("er-stylist").value = r.stylist_id;
   document.getElementById("er-note").value = r.note || "";
   document.getElementById("er-readonly").innerHTML = erReadonlyHtml(r);
