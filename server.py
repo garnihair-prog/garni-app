@@ -16,6 +16,9 @@ import mimetypes
 import calendar
 import datetime
 import smtplib
+import threading
+import time
+import unicodedata
 from email.mime.text import MIMEText
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -50,6 +53,14 @@ MAX_PHOTO_BYTES = 6 * 1024 * 1024  # 6MB（アップロード前にブラウザ�
 
 STAFF_PASSWORD = os.environ.get("GARNI_STAFF_PASSWORD", "garni2026")
 SESSIONS = {}  # token -> created_at (in-memory; MVP用。本番では永続セッションストアを推奨)
+
+# マイページ・紹介コードの照会（お客様がログインなしで使う画面）の失敗回数の記録。
+# 電話番号とお名前を総当たりで試されないよう、失敗が続いたら一定時間照会できなくする。
+# 接続元ごと（IP）と電話番号ごとの両方で数える（IPを変えながら1人を狙う試し方も止めるため）。
+LOOKUP_FAIL_LIMIT = 5             # この回数まで失敗できる
+LOOKUP_FAIL_WINDOW_SEC = 15 * 60  # 数える期間（15分）
+LOOKUP_FAILS = {}                 # ("ip"|"phone", 値) -> [失敗した時刻, ...]
+LOOKUP_FAILS_LOCK = threading.Lock()
 # アクセスログで伏せるURLの値（鍵・パスワード・電話番号）
 SECRET_QUERY_RE = re.compile(r"([?&](?:token|key|password|pass|phone|tel)=)[^&\s\"]*", re.IGNORECASE)
 
@@ -414,6 +425,130 @@ def expire_stale_referral_rewards(conn, customer_id):
     )
 
 
+def normalize_name(s):
+    """お名前の照合用に表記ゆれをそろえる：全角・半角の統一、空白（全角含む）の除去、
+    ひらがな→カタカナ、英字は小文字。"""
+    s = unicodedata.normalize("NFKC", s or "")
+    s = re.sub(r"\s+", "", s)
+    s = "".join(chr(ord(ch) + 0x60) if "ぁ" <= ch <= "ゖ" else ch for ch in s)
+    return s.lower()
+
+
+def name_matches(entered, registered_names):
+    """お客様が入力したお名前が、登録されているお名前のどれかと一致するか。
+    フルネームのほか、苗字だけでも一致とする（苗字と名前の間に空白がある場合はその前まで、
+    空白がない場合は2文字以上の先頭部分）。"""
+    e = normalize_name(entered)
+    if not e:
+        return False
+    for raw in registered_names:
+        full = normalize_name(raw)
+        if not full:
+            continue
+        if e == full:
+            return True
+        if len(e) < 2:
+            continue
+        parts = unicodedata.normalize("NFKC", raw).split()
+        if len(parts) >= 2:
+            if e == normalize_name(parts[0]):
+                return True
+        elif full.startswith(e):
+            return True
+    return False
+
+
+def find_customer_by_phone_and_name(conn, phone, name):
+    """電話番号とお名前の両方が一致するお客様を返す（一致しなければ None）。
+    照合に使うのは、顧客カルテのお名前・フリガナと、来店済み（お店で確認済み）の予約のお名前。
+    来店前の予約のお名前は使わない（他人の電話番号で予約しただけで照合を通れないようにするため）。"""
+    if not phone or not name:
+        return None
+    cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
+    if not cust:
+        return None
+    names = [cust["name"], cust["kana"]]
+    names += [r["customer_name"] for r in conn.execute(
+        "SELECT DISTINCT customer_name FROM reservations WHERE customer_id=? AND status='visited'", (cust["id"],)
+    ).fetchall()]
+    return cust if name_matches(name, names) else None
+
+
+def lookup_is_blocked(ip, phone):
+    """失敗が上限に達している接続元・電話番号なら True。"""
+    now = time.time()
+    with LOOKUP_FAILS_LOCK:
+        for key in (("ip", ip), ("phone", phone)):
+            if not key[1]:
+                continue
+            recent = [t for t in LOOKUP_FAILS.get(key, []) if now - t < LOOKUP_FAIL_WINDOW_SEC]
+            if recent:
+                LOOKUP_FAILS[key] = recent
+            else:
+                LOOKUP_FAILS.pop(key, None)
+            if len(recent) >= LOOKUP_FAIL_LIMIT:
+                return True
+    return False
+
+
+def record_lookup_failure(ip, phone):
+    now = time.time()
+    with LOOKUP_FAILS_LOCK:
+        for key in (("ip", ip), ("phone", phone)):
+            if key[1]:
+                LOOKUP_FAILS.setdefault(key, []).append(now)
+        # 記録が溜まり続けないよう、古いものを時々掃除する
+        if len(LOOKUP_FAILS) > 5000:
+            for k in [k for k, v in LOOKUP_FAILS.items() if not v or now - v[-1] >= LOOKUP_FAIL_WINDOW_SEC]:
+                del LOOKUP_FAILS[k]
+
+
+LOOKUP_BLOCKED_MESSAGE = "照会に何度か失敗したため、しばらく（15分ほど）時間をおいてからお試しください。"
+
+
+def mypage_payload(conn, cust):
+    """マイページに表示する内容：予約履歴・紹介クーポン・ポイント。
+    顧客情報は画面で使うポイントだけを返す（年齢・性別などは返さない）。"""
+    resv = conn.execute(
+        """
+        SELECT r.*, k.photo_path AS after_photo_path
+        FROM reservations r
+        LEFT JOIN karte_entries k ON k.reservation_id = r.id
+        WHERE r.customer_id=?
+        ORDER BY r.date DESC, r.time DESC
+        """,
+        (cust["id"],),
+    ).fetchall()
+    expire_stale_referral_rewards(conn, cust["id"])
+    conn.commit()
+    rewards = conn.execute(
+        "SELECT * FROM referral_rewards WHERE referrer_customer_id=? ORDER BY issued_at DESC",
+        (cust["id"],),
+    ).fetchall()
+    return {
+        "found": True,
+        "customer": {"points": cust["points"]},
+        "reservations": rows_to_list(resv),
+        "rewards": rows_to_list(rewards),
+    }
+
+
+def referral_payload(conn, cust):
+    """紹介コードの画面に表示する内容。紹介コードが未発行ならここで発行する。"""
+    if not cust["referral_code"]:
+        code = db.generate_referral_code(conn)
+        conn.execute("UPDATE customers SET referral_code=? WHERE id=?", (code, cust["id"]))
+        conn.commit()
+        cust = conn.execute("SELECT * FROM customers WHERE id=?", (cust["id"],)).fetchone()
+    expire_stale_referral_rewards(conn, cust["id"])
+    conn.commit()
+    rewards = conn.execute(
+        "SELECT * FROM referral_rewards WHERE referrer_customer_id=? ORDER BY issued_at DESC",
+        (cust["id"],),
+    ).fetchall()
+    return {"found": True, "referralCode": cust["referral_code"], "rewards": rows_to_list(rewards)}
+
+
 def merge_customers(conn, target, source, name, kana, phone):
     """顧客カルテ source を target に統合する（同じお客様が別の電話番号で予約して、カルテが
     2つに分かれてしまった場合に使う）。source に紐づく予約・来店履歴・同意書・紹介の記録を
@@ -616,6 +751,29 @@ class Handler(BaseHTTPRequestHandler):
                 return part[len(name) + 1:]
         return None
 
+    def client_ip(self):
+        # 本番はCloudflare Tunnel経由のため、サーバーから見た接続元は全員同じ（cloudflared）になる。
+        # 実際のお客様のIPはCloudflareが付ける CF-Connecting-IP に入っている。
+        return (self.headers.get("CF-Connecting-IP") or self.client_address[0] or "").strip()
+
+    def lookup_customer_or_reply(self, conn, phone, name, not_found_as_error=False):
+        """お客様向けの照会（マイページ・紹介コード・予約の変更）で、電話番号＋お名前を確かめる。
+        失敗が続いている場合は429、見つからなければ「見つからない」を返して None を返す。
+        電話番号が未登録の場合とお名前が違う場合は、同じ返事にする（登録の有無を知られないため）。"""
+        ip = self.client_ip()
+        if lookup_is_blocked(ip, phone):
+            self.send_json(429, {"error": LOOKUP_BLOCKED_MESSAGE})
+            return None
+        cust = find_customer_by_phone_and_name(conn, phone, name)
+        if not cust:
+            record_lookup_failure(ip, phone)
+            if not_found_as_error:
+                self.send_json(404, {"error": "ご予約が見つかりませんでした。電話番号とお名前をご確認ください"})
+            else:
+                self.send_json(200, {"found": False})
+            return None
+        return cust
+
     def require_staff(self):
         token = self.get_cookie("garni_session")
         if token and token in SESSIONS:
@@ -718,61 +876,11 @@ class Handler(BaseHTTPRequestHandler):
                 "sameDayMinTime": min_to_time(same_day_min) if same_day_min is not None else None,
             })
 
-        if path == "/api/mypage":
-            phone = qs.get("phone", "").strip()
-            conn = db.get_conn()
-            cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
-            if not cust:
-                conn.close()
-                return self.send_json(200, {"found": False})
-            resv = conn.execute(
-                """
-                SELECT r.*, k.photo_path AS after_photo_path
-                FROM reservations r
-                LEFT JOIN karte_entries k ON k.reservation_id = r.id
-                WHERE r.customer_id=?
-                ORDER BY r.date DESC, r.time DESC
-                """,
-                (cust["id"],),
-            ).fetchall()
-            expire_stale_referral_rewards(conn, cust["id"])
-            conn.commit()
-            rewards = conn.execute(
-                "SELECT * FROM referral_rewards WHERE referrer_customer_id=? ORDER BY issued_at DESC",
-                (cust["id"],),
-            ).fetchall()
-            conn.close()
-            return self.send_json(200, {
-                "found": True,
-                "customer": row_to_dict(cust),
-                "reservations": rows_to_list(resv),
-                "rewards": rows_to_list(rewards),
-            })
-
-        if path == "/api/referral":
-            phone = qs.get("phone", "").strip()
-            conn = db.get_conn()
-            cust = conn.execute("SELECT * FROM customers WHERE phone=?", (phone,)).fetchone()
-            if not cust:
-                conn.close()
-                return self.send_json(200, {"found": False})
-            if not cust["referral_code"]:
-                code = db.generate_referral_code(conn)
-                conn.execute("UPDATE customers SET referral_code=? WHERE id=?", (code, cust["id"]))
-                conn.commit()
-                cust = conn.execute("SELECT * FROM customers WHERE id=?", (cust["id"],)).fetchone()
-            expire_stale_referral_rewards(conn, cust["id"])
-            conn.commit()
-            rewards = conn.execute(
-                "SELECT * FROM referral_rewards WHERE referrer_customer_id=? ORDER BY issued_at DESC",
-                (cust["id"],),
-            ).fetchall()
-            conn.close()
-            return self.send_json(200, {
-                "found": True,
-                "referralCode": cust["referral_code"],
-                "rewards": rows_to_list(rewards),
-            })
+        if path in ("/api/mypage", "/api/referral"):
+            # 以前は電話番号だけ（URLのクエリ）で照会できたが、電話番号とお名前の両方を
+            # POSTで送る方式に変えた（本文で送るため、URLやアクセス記録に電話番号が残らない）。
+            # 古い画面を開いたままの方には再読み込みをお願いする。
+            return self.send_json(410, {"error": "ページを再読み込みしてから、もう一度お試しください。"})
 
         if path == "/api/me":
             token = self.get_cookie("garni_session")
@@ -1070,6 +1178,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ok": True}, extra_headers={"Set-Cookie": cookie})
             return self.send_json(401, {"ok": False, "error": "パスワードが違います"})
 
+        if path in ("/api/mypage", "/api/referral"):
+            # マイページ／紹介コードの照会。電話番号とお名前（苗字だけでも可）の両方が一致した場合のみ表示する。
+            phone = re.sub(r"\D", "", str(body.get("phone") or ""))
+            name = str(body.get("name") or "").strip()
+            if not phone or not name:
+                return self.send_json(400, {"error": "電話番号とお名前を入力してください"})
+            conn = db.get_conn()
+            cust = self.lookup_customer_or_reply(conn, phone, name)
+            if not cust:
+                conn.close()
+                return
+            payload = mypage_payload(conn, cust) if path == "/api/mypage" else referral_payload(conn, cust)
+            conn.close()
+            return self.send_json(200, payload)
+
         if path == "/api/logout":
             token = self.get_cookie("garni_session")
             if token in SESSIONS:
@@ -1210,11 +1333,14 @@ class Handler(BaseHTTPRequestHandler):
             referral_applied = False
             if cust:
                 customer_id = cust["id"]
-                if cust["name"] != name:
-                    conn.execute("UPDATE customers SET name=? WHERE id=?", (name, customer_id))
-                if gender is not None:
+                # ネット予約は誰でもできるため、登録済みのお客様の情報（お名前・性別・年齢）は上書きしない。
+                # 上書きを許すと、他人の電話番号で好きな名前を入れて予約するだけで、その名前で
+                # マイページを開けてしまう（お名前の照合が意味をなさなくなる）。
+                # 予約そのものには入力されたお名前が残るので、苗字が変わった等の場合はお店側で
+                # 顧客カルテを「編集」してもらう。性別・年齢は未登録の場合のみ補う。
+                if gender is not None and cust["gender"] is None:
                     conn.execute("UPDATE customers SET gender=? WHERE id=?", (gender, customer_id))
-                if age is not None:
+                if age is not None and cust["age"] is None:
                     conn.execute("UPDATE customers SET age=? WHERE id=?", (age, customer_id))
                 if cust["archived_at"] is not None:
                     # 削除済み（転勤等）のお客様が同じ電話番号で再度ご予約された場合、自動的に顧客一覧に復帰させる
@@ -1873,12 +1999,18 @@ class Handler(BaseHTTPRequestHandler):
         m = re.match(r"^/api/mypage/reservations/([\w-]+)$", path)
         if m:
             rid = m.group(1)
-            phone = re.sub(r"\D", "", (body.get("phone") or ""))
-            if not phone:
-                return self.send_json(400, {"error": "電話番号を入力してください"})
+            phone = re.sub(r"\D", "", str(body.get("phone") or ""))
+            name = str(body.get("name") or "").strip()
+            if not phone or not name:
+                return self.send_json(400, {"error": "電話番号とお名前を入力してください"})
             conn = db.get_conn()
+            # マイページの照会と同じく、電話番号＋お名前が一致するお客様本人の予約に限る
+            cust = self.lookup_customer_or_reply(conn, phone, name, not_found_as_error=True)
+            if not cust:
+                conn.close()
+                return
             resv = conn.execute("SELECT * FROM reservations WHERE id=?", (rid,)).fetchone()
-            if not resv or re.sub(r"\D", "", resv["customer_phone"]) != phone:
+            if not resv or resv["customer_id"] != cust["id"]:
                 conn.close()
                 return self.send_json(404, {"error": "not found"})
             if resv["status"] != "wait":
